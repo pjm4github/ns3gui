@@ -707,9 +707,18 @@ class NS3SimulationManager(QObject):
             
             # Parse FlowMonitor results if available
             flowmon_path = os.path.join(self._output_dir, "flowmon-results.xml")
+            print(f"Looking for flowmon at: {flowmon_path}")
+            print(f"File exists: {os.path.isfile(flowmon_path)}")
+            
             if os.path.isfile(flowmon_path):
                 parser = ResultsParser()
                 results.flow_stats = parser.parse_flow_monitor_xml(flowmon_path)
+                print(f"Parsed {len(results.flow_stats)} flows from XML")
+            else:
+                # Try parsing from console output as fallback
+                parser = ResultsParser()
+                results.flow_stats = parser.parse_console_output(output)
+                print(f"Parsed {len(results.flow_stats)} flows from console")
             
             # Collect PCAP files
             import glob
