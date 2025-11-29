@@ -1,0 +1,107 @@
+flowchart TB
+    subgraph Presentation["Presentation Layer"]
+        MainWindow["MainWindow\n(QMainWindow)"]
+        
+        subgraph Panels["Dock Panels"]
+            TopologyCanvas["TopologyCanvas\n(QGraphicsView)"]
+            PropertyPanel["PropertyPanel\n(QWidget)"]
+            SimControls["SimulationControls\n(QToolBar)"]
+            Console["ConsoleOutput\n(QPlainTextEdit)"]
+        end
+        
+        subgraph Dialogs["Dialogs"]
+            NodeConfig["NodeConfigDialog"]
+            AppWizard["ApplicationWizard"]
+            SimSettings["SimulationSettings"]
+            ResultsViewer["ResultsViewer"]
+        end
+        
+        subgraph Visualization["Visualization Widgets"]
+            StatsCharts["StatsCharts\n(PyQtGraph)"]
+            PacketAnimator["PacketAnimator"]
+            TimelineView["TimelineView"]
+        end
+    end
+    
+    subgraph Controllers["Controller Layer"]
+        TopologyController["TopologyController"]
+        SimulationController["SimulationController"]
+        VisualizationController["VisualizationController"]
+        ConfigController["ConfigurationController"]
+    end
+    
+    subgraph Models["Model Layer"]
+        subgraph DomainModels["Domain Models"]
+            NetworkModel["NetworkModel"]
+            NodeModel["NodeModel"]
+            ChannelModel["ChannelModel"]
+            ApplicationModel["ApplicationModel"]
+        end
+        
+        subgraph StateModels["State Models"]
+            SimulationState["SimulationState"]
+            SelectionModel["SelectionModel"]
+            UndoStack["UndoStack\n(QUndoStack)"]
+        end
+    end
+    
+    subgraph Services["Service Layer"]
+        NS3Bridge["NS3Bridge"]
+        ScriptGenerator["ScriptGenerator"]
+        TraceParser["TraceParser"]
+        ProjectManager["ProjectManager"]
+        ResultsExporter["ResultsExporter"]
+    end
+    
+    subgraph NS3Core["ns-3 Core (C++/Python Bindings)"]
+        Simulator["Simulator"]
+        NodeContainer["NodeContainer"]
+        NetDevices["NetDeviceContainer"]
+        Helpers["Protocol Helpers"]
+        FlowMonitor["FlowMonitor"]
+        TraceSources["TraceSources"]
+    end
+    
+    subgraph Persistence["Persistence Layer"]
+        ProjectFiles["Project Files\n(.ns3gui)"]
+        ScenarioFiles["Scenario Files\n(.json/.xml)"]
+        TraceFiles["Trace Files\n(.pcap/.tr)"]
+        ResultsDB["Results Cache\n(SQLite)"]
+    end
+
+    %% Presentation to Controllers
+    MainWindow --> TopologyController
+    MainWindow --> SimulationController
+    TopologyCanvas --> TopologyController
+    PropertyPanel --> ConfigController
+    SimControls --> SimulationController
+    StatsCharts --> VisualizationController
+    
+    %% Controllers to Models
+    TopologyController --> NetworkModel
+    TopologyController --> SelectionModel
+    TopologyController --> UndoStack
+    SimulationController --> SimulationState
+    ConfigController --> NodeModel
+    ConfigController --> ApplicationModel
+    VisualizationController --> SimulationState
+    
+    %% Controllers to Services
+    SimulationController --> NS3Bridge
+    TopologyController --> ScriptGenerator
+    VisualizationController --> TraceParser
+    ConfigController --> ProjectManager
+    
+    %% Services to ns-3
+    NS3Bridge --> Simulator
+    NS3Bridge --> NodeContainer
+    NS3Bridge --> NetDevices
+    NS3Bridge --> Helpers
+    NS3Bridge --> FlowMonitor
+    TraceParser --> TraceSources
+    
+    %% Services to Persistence
+    ProjectManager --> ProjectFiles
+    ScriptGenerator --> ScenarioFiles
+    TraceParser --> TraceFiles
+    ResultsExporter --> ResultsDB

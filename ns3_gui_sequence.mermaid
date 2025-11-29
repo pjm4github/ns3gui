@@ -1,0 +1,54 @@
+sequenceDiagram
+    participant User
+    participant MainWindow
+    participant TopologyCanvas
+    participant TopologyController
+    participant NetworkModel
+    participant NS3Bridge
+    participant SimulationController
+    participant ns3 as ns-3 Simulator
+
+    %% Topology Creation Flow
+    rect rgb(230, 245, 255)
+        Note over User, NetworkModel: Topology Creation
+        User->>TopologyCanvas: Drag node from palette
+        TopologyCanvas->>TopologyController: onNodeDropped(type, position)
+        TopologyController->>NetworkModel: createNode(type, config)
+        NetworkModel-->>TopologyController: NodeModel instance
+        TopologyController->>TopologyCanvas: addNodeGraphic(node)
+        TopologyCanvas-->>User: Visual node appears
+    end
+
+    %% Connection Flow
+    rect rgb(255, 245, 230)
+        Note over User, NetworkModel: Link Creation
+        User->>TopologyCanvas: Draw link between nodes
+        TopologyCanvas->>TopologyController: onLinkCreated(node1, node2)
+        TopologyController->>NetworkModel: createChannel(node1, node2, type)
+        NetworkModel-->>TopologyController: ChannelModel instance
+        TopologyController->>TopologyCanvas: addLinkGraphic(channel)
+    end
+
+    %% Simulation Flow
+    rect rgb(230, 255, 230)
+        Note over User, ns3: Simulation Execution
+        User->>MainWindow: Click "Run Simulation"
+        MainWindow->>SimulationController: startSimulation()
+        SimulationController->>NS3Bridge: buildSimulation(NetworkModel)
+        NS3Bridge->>ns3: Create NodeContainer
+        NS3Bridge->>ns3: Install NetDevices
+        NS3Bridge->>ns3: Configure IP stack
+        NS3Bridge->>ns3: Install Applications
+        NS3Bridge->>ns3: Simulator::Run()
+        
+        loop During Simulation
+            ns3-->>NS3Bridge: Trace callbacks
+            NS3Bridge-->>SimulationController: emitPacketEvent()
+            SimulationController-->>TopologyCanvas: animatePacket()
+            SimulationController-->>MainWindow: updateStats()
+        end
+        
+        ns3-->>NS3Bridge: Simulation complete
+        NS3Bridge-->>SimulationController: onSimulationComplete(results)
+        SimulationController-->>MainWindow: showResults()
+    end

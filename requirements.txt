@@ -1,0 +1,12 @@
+# ns-3 GUI MVP Requirements
+
+# Core Qt framework
+PyQt6>=6.4.0
+
+# For Phase 2 - ns-3 integration
+# ns3  # Install via ns-3's build system with Python bindings
+
+# For Phase 2 - Charts (optional, using basic widgets for MVP)
+# pyqtgraph>=0.13.0
+
+mininet
