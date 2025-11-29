@@ -2,14 +2,62 @@
 NS-3 Simulation Runner.
 
 Manages ns-3 subprocess execution and output capture.
+Supports both native Linux/macOS and Windows WSL execution.
 """
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QTimer
+
+
+def is_windows() -> bool:
+    """Check if running on Windows."""
+    return platform.system() == "Windows"
+
+
+def is_wsl_available() -> bool:
+    """Check if WSL is available on Windows."""
+    if not is_windows():
+        return False
+    try:
+        result = subprocess.run(
+            ["wsl", "--status"],
+            capture_output=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def windows_to_wsl_path(win_path: str) -> str:
+    """
+    Convert Windows path to WSL path.
+    
+    C:\\Users\\Name\\folder -> /mnt/c/Users/Name/folder
+    """
+    path = win_path.replace('\\', '/')
+    if len(path) >= 2 and path[1] == ':':
+        drive = path[0].lower()
+        path = f"/mnt/{drive}{path[2:]}"
+    return path
+
+
+def wsl_to_windows_path(wsl_path: str) -> str:
+    """
+    Convert WSL path to Windows path.
+    
+    /mnt/c/Users/Name/folder -> C:\\Users\\Name\\folder
+    """
+    if wsl_path.startswith('/mnt/') and len(wsl_path) > 6:
+        drive = wsl_path[5].upper()
+        rest = wsl_path[6:].replace('/', '\\')
+        return f"{drive}:{rest}"
+    return wsl_path
 
 
 class NS3Detector:
@@ -17,6 +65,7 @@ class NS3Detector:
     Auto-detect ns-3 installation.
     
     Searches common locations and validates the installation.
+    Supports both native paths and WSL paths on Windows.
     """
     
     COMMON_PATHS = [
@@ -33,44 +82,89 @@ class NS3Detector:
         "../ns-3*",
     ]
     
+    # WSL-specific paths to check
+    WSL_PATHS = [
+        "~/ns-3-dev",
+        "~/ns-allinone-3.*/ns-3.*",
+        "~/ns3",
+        "/opt/ns-3*",
+        "/home/*/ns-3*",
+    ]
+    
     @classmethod
-    def find_ns3_path(cls) -> Optional[str]:
+    def find_ns3_path(cls, check_wsl: bool = True) -> Optional[str]:
         """
         Search for ns-3 installation.
         
+        Args:
+            check_wsl: On Windows, also check inside WSL
+            
         Returns:
             Path to ns-3 directory, or None if not found.
+            On Windows with WSL, returns WSL path (e.g., ~/ns-3-dev)
         """
         import glob
         
+        # First check native paths
         for pattern in cls.COMMON_PATHS:
             expanded = os.path.expanduser(pattern)
             matches = glob.glob(expanded)
-            for match in sorted(matches, reverse=True):  # Prefer newer versions
+            for match in sorted(matches, reverse=True):
                 if cls.validate_ns3_path(match):
                     return match
         
         # Try to find ns3 in PATH
         ns3_cmd = shutil.which("ns3")
         if ns3_cmd:
-            # ns3 script is usually in the ns-3 root directory
             ns3_dir = os.path.dirname(ns3_cmd)
             if cls.validate_ns3_path(ns3_dir):
                 return ns3_dir
         
+        # On Windows, check WSL
+        if is_windows() and check_wsl and is_wsl_available():
+            wsl_path = cls._find_ns3_in_wsl()
+            if wsl_path:
+                return wsl_path
+        
         return None
     
     @classmethod
-    def validate_ns3_path(cls, path: str) -> bool:
+    def _find_ns3_in_wsl(cls) -> Optional[str]:
+        """Search for ns-3 inside WSL."""
+        for pattern in cls.WSL_PATHS:
+            try:
+                # Use WSL to expand glob and check
+                cmd = f'for p in {pattern}; do [ -f "$p/ns3" ] && echo "$p" && break; done'
+                result = subprocess.run(
+                    ["wsl", "-e", "bash", "-c", cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    path = result.stdout.strip()
+                    # Validate it
+                    if cls.validate_ns3_path_wsl(path):
+                        return path
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+        return None
+    
+    @classmethod
+    def validate_ns3_path(cls, path: str, use_wsl: bool = False) -> bool:
         """
         Validate that a path contains a valid ns-3 installation.
         
         Args:
-            path: Path to check
+            path: Path to check (native or WSL path)
+            use_wsl: If True, validate via WSL commands
             
         Returns:
             True if valid ns-3 installation
         """
+        if use_wsl or (is_windows() and path.startswith(('/', '~'))):
+            return cls.validate_ns3_path_wsl(path)
+        
         if not os.path.isdir(path):
             return False
         
@@ -87,16 +181,39 @@ class NS3Detector:
         return False
     
     @classmethod
-    def get_ns3_version(cls, ns3_path: str) -> Optional[str]:
+    def validate_ns3_path_wsl(cls, path: str) -> bool:
+        """Validate ns-3 path inside WSL."""
+        if not is_wsl_available():
+            return False
+        
+        try:
+            # Expand ~ and check for ns3 script
+            cmd = f'[ -f "{path}/ns3" ] || [ -f "{path}/waf" ] && echo "valid"'
+            result = subprocess.run(
+                ["wsl", "-e", "bash", "-c", cmd],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.stdout.strip() == "valid"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    
+    @classmethod
+    def get_ns3_version(cls, ns3_path: str, use_wsl: bool = False) -> Optional[str]:
         """
         Get ns-3 version string.
         
         Args:
             ns3_path: Path to ns-3 installation
+            use_wsl: If True, read version via WSL
             
         Returns:
             Version string or None
         """
+        if use_wsl or (is_windows() and ns3_path.startswith(('/', '~'))):
+            return cls._get_ns3_version_wsl(ns3_path)
+        
         version_file = os.path.join(ns3_path, "VERSION")
         if os.path.isfile(version_file):
             try:
@@ -115,16 +232,40 @@ class NS3Detector:
         return None
     
     @classmethod
-    def check_python_bindings(cls, ns3_path: str) -> bool:
+    def _get_ns3_version_wsl(cls, ns3_path: str) -> Optional[str]:
+        """Get ns-3 version from WSL."""
+        try:
+            cmd = f'cat "{ns3_path}/VERSION" 2>/dev/null || basename "{ns3_path}"'
+            result = subprocess.run(
+                ["wsl", "-e", "bash", "-c", cmd],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                version = result.stdout.strip()
+                # Clean up if it's just the directory name
+                version = version.replace("ns-3", "").replace("ns3", "").strip("-._")
+                return version if version else None
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return None
+    
+    @classmethod
+    def check_python_bindings(cls, ns3_path: str, use_wsl: bool = False) -> bool:
         """
         Check if ns-3 has Python bindings enabled.
         
         Args:
             ns3_path: Path to ns-3 installation
+            use_wsl: Check via WSL
             
         Returns:
             True if Python bindings are available
         """
+        if use_wsl or (is_windows() and ns3_path.startswith(('/', '~'))):
+            return cls._check_python_bindings_wsl(ns3_path)
+        
         # Check for build/bindings directory
         bindings_path = os.path.join(ns3_path, "build", "bindings", "python")
         if os.path.isdir(bindings_path):
@@ -136,6 +277,28 @@ class NS3Detector:
             return True
         
         return False
+    
+    @classmethod
+    def _check_python_bindings_wsl(cls, ns3_path: str) -> bool:
+        """Check Python bindings via WSL."""
+        try:
+            cmd = f'[ -d "{ns3_path}/build/bindings/python" ] || [ -d "{ns3_path}/build/lib/python" ] && echo "yes"'
+            result = subprocess.run(
+                ["wsl", "-e", "bash", "-c", cmd],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.stdout.strip() == "yes"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    
+    @classmethod
+    def is_wsl_path(cls, path: str) -> bool:
+        """Check if a path is a WSL path (Linux-style on Windows)."""
+        if not is_windows():
+            return False
+        return path.startswith('/') or path.startswith('~')
 
 
 class SimulationRunner(QObject):
@@ -143,6 +306,7 @@ class SimulationRunner(QObject):
     Runs ns-3 simulation as subprocess.
     
     Uses QProcess for non-blocking execution with signal-based output.
+    Supports both native execution and WSL on Windows.
     """
     
     # Signals
@@ -159,6 +323,7 @@ class SimulationRunner(QObject):
         self._output_buffer: List[str] = []
         self._script_path: Optional[str] = None
         self._output_dir: Optional[str] = None
+        self._use_wsl = False
         
     @property
     def ns3_path(self) -> str:
@@ -167,6 +332,16 @@ class SimulationRunner(QObject):
     @ns3_path.setter
     def ns3_path(self, value: str):
         self._ns3_path = value
+        # Auto-detect if this is a WSL path
+        self._use_wsl = NS3Detector.is_wsl_path(value)
+    
+    @property
+    def use_wsl(self) -> bool:
+        return self._use_wsl
+    
+    @use_wsl.setter
+    def use_wsl(self, value: bool):
+        self._use_wsl = value
     
     @property
     def is_running(self) -> bool:
@@ -178,7 +353,7 @@ class SimulationRunner(QObject):
         
         Args:
             script_content: The Python script content
-            output_dir: Directory for output files
+            output_dir: Directory for output files (Windows path)
             
         Returns:
             True if started successfully
@@ -187,7 +362,12 @@ class SimulationRunner(QObject):
             self.error.emit("Simulation already running")
             return False
         
-        if not self._ns3_path or not NS3Detector.validate_ns3_path(self._ns3_path):
+        # Validate ns-3 path
+        if not self._ns3_path:
+            self.error.emit("ns-3 path not configured")
+            return False
+        
+        if not NS3Detector.validate_ns3_path(self._ns3_path, use_wsl=self._use_wsl):
             self.error.emit(f"Invalid ns-3 path: {self._ns3_path}")
             return False
         
@@ -195,6 +375,16 @@ class SimulationRunner(QObject):
         os.makedirs(output_dir, exist_ok=True)
         self._output_dir = output_dir
         
+        # Clear output buffer
+        self._output_buffer = []
+        
+        if self._use_wsl:
+            return self._run_script_wsl(script_content, output_dir)
+        else:
+            return self._run_script_native(script_content, output_dir)
+    
+    def _run_script_native(self, script_content: str, output_dir: str) -> bool:
+        """Run script natively (Linux/macOS)."""
         # Save script to scratch directory
         scratch_dir = os.path.join(self._ns3_path, "scratch")
         os.makedirs(scratch_dir, exist_ok=True)
@@ -206,9 +396,6 @@ class SimulationRunner(QObject):
         except Exception as e:
             self.error.emit(f"Failed to write script: {e}")
             return False
-        
-        # Clear output buffer
-        self._output_buffer = []
         
         # Create process
         self._process = QProcess(self)
@@ -223,17 +410,14 @@ class SimulationRunner(QObject):
         # Determine command
         ns3_script = os.path.join(self._ns3_path, "ns3")
         if os.path.isfile(ns3_script):
-            # ns-3.36+ uses ns3 script
             program = ns3_script
             args = ["run", "scratch/gui_simulation.py"]
         else:
-            # Older ns-3 uses waf
             program = os.path.join(self._ns3_path, "waf")
             args = ["--run", "scratch/gui_simulation"]
         
         # Set environment
         env = QProcess.systemEnvironment()
-        # Add ns-3 library path
         lib_path = os.path.join(self._ns3_path, "build", "lib")
         env.append(f"LD_LIBRARY_PATH={lib_path}:$LD_LIBRARY_PATH")
         env.append(f"PYTHONPATH={self._ns3_path}/build/bindings/python:$PYTHONPATH")
@@ -247,6 +431,79 @@ class SimulationRunner(QObject):
             return True
         else:
             self.error.emit("Failed to start ns-3 process")
+            return False
+    
+    def _run_script_wsl(self, script_content: str, output_dir: str) -> bool:
+        """Run script via WSL on Windows."""
+        # Convert output dir to WSL path
+        wsl_output_dir = windows_to_wsl_path(output_dir)
+        
+        # Update script to use WSL output path
+        script_content = script_content.replace(output_dir, wsl_output_dir)
+        script_content = script_content.replace(output_dir.replace('\\', '/'), wsl_output_dir)
+        
+        # Save script to Windows temp location first
+        script_path = os.path.join(output_dir, "gui_simulation.py")
+        try:
+            with open(script_path, "w", newline='\n') as f:  # Use Unix line endings
+                f.write(script_content)
+        except Exception as e:
+            self.error.emit(f"Failed to write script: {e}")
+            return False
+        
+        self._script_path = script_path
+        
+        # Build WSL command
+        wsl_script_path = windows_to_wsl_path(script_path)
+        ns3_path = self._ns3_path
+        
+        # Expand ~ in ns3_path for the command
+        if ns3_path.startswith('~'):
+            ns3_path_expanded = ns3_path  # WSL will expand it
+        else:
+            ns3_path_expanded = ns3_path
+        
+        # Create the bash command to run
+        # For ns-3.45+, we need to run Python scripts properly
+        # Option 1: Use ns3 run with scratch-simulator style name
+        # Option 2: Run Python directly with proper PYTHONPATH
+        bash_cmd = f'''
+set -e
+cd {ns3_path_expanded}
+echo "NS-3 Directory: $(pwd)"
+echo "Copying script..."
+cp "{wsl_script_path}" scratch/gui_simulation.py
+
+# Try running with ns3 run first
+echo "Attempting to run simulation..."
+if ./ns3 run scratch/gui_simulation.py 2>&1; then
+    echo "Simulation completed successfully"
+else
+    echo "ns3 run failed, trying alternative method..."
+    # Alternative: run Python directly with proper paths
+    export PYTHONPATH="$(pwd)/build/bindings/python:$PYTHONPATH"
+    export LD_LIBRARY_PATH="$(pwd)/build/lib:$LD_LIBRARY_PATH"
+    python3 scratch/gui_simulation.py 2>&1
+fi
+'''
+        
+        # Create process
+        self._process = QProcess(self)
+        
+        # Connect signals
+        self._process.readyReadStandardOutput.connect(self._on_stdout)
+        self._process.readyReadStandardError.connect(self._on_stderr)
+        self._process.finished.connect(self._on_finished_wsl)
+        self._process.errorOccurred.connect(self._on_error)
+        
+        # Start WSL process
+        self._process.start("wsl", ["-e", "bash", "-c", bash_cmd])
+        
+        if self._process.waitForStarted(10000):
+            self.started.emit()
+            return True
+        else:
+            self.error.emit("Failed to start WSL process")
             return False
     
     def stop(self):
@@ -263,8 +520,6 @@ class SimulationRunner(QObject):
             for line in data.splitlines():
                 self._output_buffer.append(line)
                 self.output_line.emit(line)
-                
-                # Try to parse progress from output
                 self._parse_progress(line)
     
     def _on_stderr(self):
@@ -276,7 +531,15 @@ class SimulationRunner(QObject):
                 self.output_line.emit(f"[stderr] {line}")
     
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
-        """Handle process completion."""
+        """Handle process completion (native)."""
+        output = "\n".join(self._output_buffer)
+        self.finished.emit(exit_code, output)
+        self._process = None
+    
+    def _on_finished_wsl(self, exit_code: int, exit_status: QProcess.ExitStatus):
+        """Handle process completion (WSL)."""
+        # Copy results from WSL output location if needed
+        # The script should have written to the shared folder already
         output = "\n".join(self._output_buffer)
         self.finished.emit(exit_code, output)
         self._process = None
@@ -291,12 +554,13 @@ class SimulationRunner(QObject):
             QProcess.ProcessError.ReadError: "Read error",
             QProcess.ProcessError.UnknownError: "Unknown error",
         }
-        self.error.emit(error_messages.get(error, f"Process error: {error}"))
+        msg = error_messages.get(error, f"Process error: {error}")
+        if self._use_wsl:
+            msg += "\n\nMake sure WSL is installed and running."
+        self.error.emit(msg)
     
     def _parse_progress(self, line: str):
         """Try to parse progress from output line."""
-        # Look for patterns like "Simulation time: 5.0s / 10.0s"
-        # or percentage indicators
         import re
         
         # Pattern: time progress
@@ -319,6 +583,7 @@ class NS3SimulationManager(QObject):
     High-level manager for ns-3 simulations.
     
     Coordinates script generation, running, and result parsing.
+    Supports both native and WSL execution.
     """
     
     # Signals
@@ -331,6 +596,7 @@ class NS3SimulationManager(QObject):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._ns3_path = ""
+        self._use_wsl = False
         self._runner: Optional[SimulationRunner] = None
         self._output_dir = ""
         
@@ -338,6 +604,7 @@ class NS3SimulationManager(QObject):
         detected = NS3Detector.find_ns3_path()
         if detected:
             self._ns3_path = detected
+            self._use_wsl = NS3Detector.is_wsl_path(detected)
     
     @property
     def ns3_path(self) -> str:
@@ -346,20 +613,41 @@ class NS3SimulationManager(QObject):
     @ns3_path.setter
     def ns3_path(self, value: str):
         self._ns3_path = value
+        self._use_wsl = NS3Detector.is_wsl_path(value)
+    
+    @property
+    def use_wsl(self) -> bool:
+        return self._use_wsl
+    
+    @use_wsl.setter
+    def use_wsl(self, value: bool):
+        self._use_wsl = value
     
     @property
     def ns3_available(self) -> bool:
-        return bool(self._ns3_path) and NS3Detector.validate_ns3_path(self._ns3_path)
+        return bool(self._ns3_path) and NS3Detector.validate_ns3_path(
+            self._ns3_path, use_wsl=self._use_wsl
+        )
     
     @property
     def ns3_version(self) -> Optional[str]:
         if self._ns3_path:
-            return NS3Detector.get_ns3_version(self._ns3_path)
+            return NS3Detector.get_ns3_version(self._ns3_path, use_wsl=self._use_wsl)
         return None
     
     @property
     def is_running(self) -> bool:
         return self._runner is not None and self._runner.is_running
+    
+    @property
+    def execution_mode(self) -> str:
+        """Get description of execution mode."""
+        if self._use_wsl:
+            return "WSL"
+        elif is_windows():
+            return "Native Windows"
+        else:
+            return "Native"
     
     def run_simulation(
         self, 
@@ -371,19 +659,24 @@ class NS3SimulationManager(QObject):
         
         Args:
             script_content: Generated ns-3 Python script
-            output_dir: Directory for output files
+            output_dir: Directory for output files (always Windows path on Windows)
             
         Returns:
             True if started successfully
         """
         if not self.ns3_available:
-            self.simulationError.emit("ns-3 not found. Please configure the path in settings.")
+            msg = "ns-3 not found."
+            if is_windows():
+                msg += "\n\nOn Windows, you need:\n1. WSL installed (wsl --install)\n2. ns-3 installed inside WSL"
+            msg += "\n\nPlease configure the path in settings."
+            self.simulationError.emit(msg)
             return False
         
         self._output_dir = output_dir
         
         # Create runner
         self._runner = SimulationRunner(self._ns3_path, self)
+        self._runner.use_wsl = self._use_wsl
         self._runner.started.connect(self._on_started)
         self._runner.finished.connect(self._on_finished)
         self._runner.error.connect(self._on_error)
@@ -429,6 +722,13 @@ class NS3SimulationManager(QObject):
         else:
             results.success = False
             results.error_message = f"Simulation failed with exit code {exit_code}"
+            
+            # Try to extract error from output
+            if "error" in output.lower() or "exception" in output.lower():
+                for line in output.split('\n'):
+                    if 'error' in line.lower() or 'exception' in line.lower():
+                        results.error_message += f"\n{line}"
+                        break
         
         self.simulationFinished.emit(results)
     

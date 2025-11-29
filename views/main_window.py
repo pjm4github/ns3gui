@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QAction, QKeySequence, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -27,10 +27,13 @@ from models import (
     TrafficFlow, TrafficApplication, TrafficProtocol,
     SimulationResults
 )
-from views import TopologyCanvas, PropertyPanel, NodePalette, StatsPanel
+from views import TopologyCanvas, PropertyPanel, NodePalette, StatsPanel, PlaybackControls
+from views.settings_dialog import SettingsDialog
 from services import (
     ProjectManager, export_to_mininet,
-    NS3ScriptGenerator, NS3SimulationManager, NS3Detector
+    NS3ScriptGenerator, NS3SimulationManager, NS3Detector,
+    TracePlayer, PacketEvent, PacketEventType,
+    get_settings
 )
 
 
@@ -157,6 +160,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # Settings manager (JSON file based)
+        self.settings_manager = get_settings()
+        
         # Models
         self.network_model = NetworkModel()
         self.simulation_state = SimulationState()
@@ -167,14 +173,63 @@ class MainWindow(QMainWindow):
         self.sim_manager = NS3SimulationManager()
         self._sim_output_dir = ""
         
+        # Load saved ns-3 path from settings
+        self._load_ns3_settings()
+        
+        # Trace player for packet animation
+        self.trace_player = TracePlayer()
+        
         # Setup
         self._setup_window()
         self._setup_menu()
         self._setup_toolbar()
         self._setup_central_widget()
+        self._setup_playback_controls()
         self._setup_status_bar()
         self._connect_signals()
         self._connect_simulation_signals()
+        self._connect_trace_player_signals()
+        
+        # Restore window geometry
+        self._load_window_settings()
+    
+    def _load_ns3_settings(self):
+        """Load saved ns-3 configuration from settings file."""
+        s = self.settings_manager.settings.ns3
+        if s.path:
+            self.sim_manager.ns3_path = s.path
+            self.sim_manager.use_wsl = s.use_wsl
+            if self.sim_manager.ns3_available:
+                print(f"Loaded ns-3 path: {s.path}")
+            else:
+                print(f"Saved ns-3 path invalid: {s.path}")
+    
+    def _save_ns3_settings(self):
+        """Save ns-3 configuration to settings file."""
+        s = self.settings_manager.settings.ns3
+        s.path = self.sim_manager.ns3_path
+        s.use_wsl = self.sim_manager.use_wsl
+        self.settings_manager.save()
+    
+    def _load_window_settings(self):
+        """Restore window geometry and state."""
+        geometry, state = self.settings_manager.get_window_geometry()
+        if geometry:
+            self.restoreGeometry(geometry)
+        if state:
+            self.restoreState(state)
+    
+    def _save_window_settings(self):
+        """Save window geometry and state."""
+        self.settings_manager.save_window_geometry(
+            self.saveGeometry(),
+            self.saveState()
+        )
+    
+    def closeEvent(self, event):
+        """Handle window close - save settings."""
+        self._save_window_settings()
+        super().closeEvent(event)
     
     def _setup_window(self):
         """Configure window properties."""
@@ -262,6 +317,13 @@ class MainWindow(QMainWindow):
         select_all_action.triggered.connect(self._on_select_all)
         edit_menu.addAction(select_all_action)
         
+        edit_menu.addSeparator()
+        
+        settings_action = QAction("&Settings...", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._on_show_settings)
+        edit_menu.addAction(settings_action)
+        
         # View menu
         view_menu = menubar.addMenu("&View")
         
@@ -274,6 +336,25 @@ class MainWindow(QMainWindow):
         reset_view_action.setShortcut("Ctrl+R")
         reset_view_action.triggered.connect(self._on_reset_view)
         view_menu.addAction(reset_view_action)
+        
+        # Simulation menu
+        sim_menu = menubar.addMenu("&Simulation")
+        
+        run_action = QAction("&Run Simulation", self)
+        run_action.setShortcut("F5")
+        run_action.triggered.connect(self._on_run_simulation)
+        sim_menu.addAction(run_action)
+        
+        stop_action = QAction("&Stop Simulation", self)
+        stop_action.setShortcut("Shift+F5")
+        stop_action.triggered.connect(self._on_stop_simulation)
+        sim_menu.addAction(stop_action)
+        
+        sim_menu.addSeparator()
+        
+        ns3_config_action = QAction("Configure &ns-3 Path...", self)
+        ns3_config_action.triggered.connect(self._show_ns3_config_dialog)
+        sim_menu.addAction(ns3_config_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -364,6 +445,17 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(splitter)
     
+    def _setup_playback_controls(self):
+        """Create playback controls bar at bottom of canvas."""
+        # Create playback controls
+        self.playback_controls = PlaybackControls(self.trace_player)
+        self.playback_controls.setVisible(False)  # Hidden until trace loaded
+        
+        # Add to main layout (below the splitter)
+        central = self.centralWidget()
+        if central and central.layout():
+            central.layout().addWidget(self.playback_controls)
+    
     def _setup_status_bar(self):
         """Create status bar."""
         status = QStatusBar()
@@ -423,6 +515,66 @@ class MainWindow(QMainWindow):
         self.sim_manager.simulationError.connect(self._on_simulation_error)
         self.sim_manager.outputReceived.connect(self._on_simulation_output)
         self.sim_manager.progressUpdated.connect(self._on_simulation_progress)
+    
+    def _connect_trace_player_signals(self):
+        """Connect trace player signals for packet animation."""
+        self.trace_player.packet_event.connect(self._on_packet_event)
+        self.trace_player.playback_finished.connect(self._on_playback_finished)
+        
+        # Playback controls visibility toggle
+        self.playback_controls.visibility_requested.connect(
+            lambda visible: setattr(
+                self.canvas.topology_scene.animation_manager, 
+                'enabled', 
+                visible
+            )
+        )
+    
+    def _on_packet_event(self, event: PacketEvent):
+        """Handle packet event from trace player - animate packet."""
+        # Map node indices to node IDs
+        node_ids = list(self.network_model.nodes.keys())
+        
+        if event.event_type == PacketEventType.TX:
+            # Find the link for this transmission
+            node_idx = event.node_id
+            if node_idx < len(node_ids):
+                source_id = node_ids[node_idx]
+                # Find a link from this node
+                for link_id, link in self.network_model.links.items():
+                    if link.source_node_id == source_id:
+                        self.canvas.topology_scene.animation_manager.animate_packet_on_link(
+                            link_id, 'forward', 'tx', 
+                            int(200 / self.trace_player.speed)
+                        )
+                        break
+                    elif link.target_node_id == source_id:
+                        self.canvas.topology_scene.animation_manager.animate_packet_on_link(
+                            link_id, 'backward', 'tx',
+                            int(200 / self.trace_player.speed)
+                        )
+                        break
+        
+        elif event.event_type == PacketEventType.RX:
+            # Could show a receive animation if desired
+            pass
+        
+        elif event.event_type == PacketEventType.DROP:
+            # Show drop animation
+            node_idx = event.node_id
+            if node_idx < len(node_ids):
+                source_id = node_ids[node_idx]
+                for link_id, link in self.network_model.links.items():
+                    if link.source_node_id == source_id or link.target_node_id == source_id:
+                        # Just show a brief flash for dropped packet
+                        self.canvas.topology_scene.animation_manager.animate_packet_on_link(
+                            link_id, 'forward', 'drop', 100
+                        )
+                        break
+    
+    def _on_playback_finished(self):
+        """Handle trace playback finished."""
+        self.statusBar().showMessage("Playback finished", 3000)
     
     def _on_node_type_selected(self, node_type: NodeType):
         """Handle node type selection from palette."""
@@ -551,6 +703,9 @@ class MainWindow(QMainWindow):
     def _on_simulation_started(self):
         """Handle simulation start."""
         self.statusBar().showMessage("Simulation running...")
+        # Clear any previous trace
+        self.trace_player.stop()
+        self.playback_controls.setVisible(False)
     
     def _on_simulation_finished(self, results: SimulationResults):
         """Handle simulation completion."""
@@ -560,6 +715,17 @@ class MainWindow(QMainWindow):
             self.simulation_state.status = SimulationStatus.COMPLETED
             self.simulation_state.set_results(results)
             self.statusBar().showMessage("Simulation completed successfully", 5000)
+            
+            # Load trace for playback if we have packet events
+            if results.console_output:
+                loaded = self.trace_player.load_output(results.console_output)
+                if loaded and self.trace_player.event_count > 0:
+                    self.playback_controls.setVisible(True)
+                    self.playback_controls.on_trace_loaded()
+                    self.statusBar().showMessage(
+                        f"Loaded {self.trace_player.event_count} packet events for replay", 
+                        5000
+                    )
         else:
             self.simulation_state.set_error(results.error_message)
             self.statusBar().showMessage(f"Simulation failed: {results.error_message}", 5000)
@@ -585,12 +751,18 @@ class MainWindow(QMainWindow):
         dialog = NS3PathDialog(self.sim_manager.ns3_path, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             path = dialog.get_path()
-            if NS3Detector.validate_ns3_path(path):
+            use_wsl = NS3Detector.is_wsl_path(path)
+            if NS3Detector.validate_ns3_path(path, use_wsl=use_wsl):
                 self.sim_manager.ns3_path = path
+                # Save settings for next time
+                self._save_ns3_settings()
                 QMessageBox.information(
                     self, 
                     "ns-3 Configured",
-                    f"ns-3 found at: {path}\nVersion: {NS3Detector.get_ns3_version(path) or 'unknown'}"
+                    f"ns-3 found at: {path}\n"
+                    f"Version: {NS3Detector.get_ns3_version(path, use_wsl=use_wsl) or 'unknown'}\n"
+                    f"Mode: {'WSL' if use_wsl else 'Native'}\n\n"
+                    f"This path has been saved for future sessions."
                 )
             else:
                 QMessageBox.warning(self, "Invalid Path", "The specified path is not a valid ns-3 installation.")
@@ -613,6 +785,24 @@ class MainWindow(QMainWindow):
             self.stats_panel.reset()
             self._update_counts()
             self.statusBar().showMessage("Topology cleared", 2000)
+    
+    def _on_show_settings(self):
+        """Show the settings dialog."""
+        dialog = SettingsDialog(self)
+        dialog.settingsChanged.connect(self._on_settings_changed)
+        dialog.exec()
+    
+    def _on_settings_changed(self):
+        """Handle settings changes from dialog."""
+        # Reload ns-3 settings
+        self._load_ns3_settings()
+        
+        # Apply UI settings
+        s = self.settings_manager.settings.ui
+        self.trace_player.speed = s.animation_speed
+        self.canvas.topology_scene.animation_manager.enabled = s.show_packet_animations
+        
+        self.statusBar().showMessage("Settings updated", 2000)
     
     def _on_simulation_status_changed(self, status: SimulationStatus):
         """Handle simulation status changes."""
@@ -813,6 +1003,7 @@ class MainWindow(QMainWindow):
             "<li>Simulation execution and results</li>"
             "</ul>"
             f"<p><b>ns-3 Status:</b> {ns3_status}</p>"
+            f"<p><b>Execution Mode:</b> {self.sim_manager.execution_mode}</p>"
         )
 
 
@@ -830,6 +1021,25 @@ class NS3PathDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
+        # Platform info
+        from services.simulation_runner import is_windows, is_wsl_available
+        
+        if is_windows():
+            if is_wsl_available():
+                platform_info = QLabel(
+                    "✓ Running on Windows with WSL available.\n"
+                    "You can use a Linux path (e.g., ~/ns-3-dev) to run ns-3 inside WSL."
+                )
+                platform_info.setStyleSheet("color: #10B981; margin-bottom: 8px;")
+            else:
+                platform_info = QLabel(
+                    "⚠ Running on Windows without WSL.\n"
+                    "Install WSL to run ns-3: Open PowerShell as Admin and run 'wsl --install'"
+                )
+                platform_info.setStyleSheet("color: #F59E0B; margin-bottom: 8px;")
+            platform_info.setWordWrap(True)
+            layout.addWidget(platform_info)
+        
         # Instructions
         info = QLabel(
             "Specify the path to your ns-3 installation.\n"
@@ -843,7 +1053,10 @@ class NS3PathDialog(QDialog):
         path_layout = QHBoxLayout()
         
         self._path_edit = QLineEdit(self._path)
-        self._path_edit.setPlaceholderText("/path/to/ns-3")
+        if is_windows():
+            self._path_edit.setPlaceholderText("~/ns-3-dev (WSL) or C:\\ns3\\ns-3-dev (native)")
+        else:
+            self._path_edit.setPlaceholderText("/path/to/ns-3")
         path_layout.addWidget(self._path_edit)
         
         browse_btn = QPushButton("Browse...")
@@ -857,9 +1070,20 @@ class NS3PathDialog(QDialog):
         detect_btn.clicked.connect(self._auto_detect)
         layout.addWidget(detect_btn)
         
+        # WSL path examples (on Windows)
+        if is_windows():
+            examples = QLabel(
+                "Examples:\n"
+                "  WSL: ~/ns-3-dev, /home/username/ns-allinone-3.40/ns-3.40\n"
+                "  Windows: C:\\ns3\\ns-3-dev (if installed natively)"
+            )
+            examples.setStyleSheet("color: #9CA3AF; font-size: 10px; margin-top: 8px;")
+            layout.addWidget(examples)
+        
         # Status
         self._status_label = QLabel()
         self._status_label.setStyleSheet("color: #6B7280; font-size: 11px;")
+        self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
         
         # Buttons
@@ -884,13 +1108,22 @@ class NS3PathDialog(QDialog):
     
     def _auto_detect(self):
         """Try to auto-detect ns-3."""
+        self._status_label.setText("Searching for ns-3...")
+        self._status_label.setStyleSheet("color: #6B7280; font-size: 11px;")
+        QApplication.processEvents()  # Update UI
+        
         path = NS3Detector.find_ns3_path()
         if path:
             self._path_edit.setText(path)
-            self._status_label.setText(f"✓ Found ns-3 at: {path}")
+            mode = "WSL" if NS3Detector.is_wsl_path(path) else "native"
+            self._status_label.setText(f"✓ Found ns-3 at: {path} ({mode})")
             self._status_label.setStyleSheet("color: #10B981; font-size: 11px;")
         else:
-            self._status_label.setText("✗ Could not auto-detect ns-3 installation")
+            msg = "✗ Could not auto-detect ns-3 installation"
+            from services.simulation_runner import is_windows, is_wsl_available
+            if is_windows() and not is_wsl_available():
+                msg += "\n\nWSL not available. Install with: wsl --install"
+            self._status_label.setText(msg)
             self._status_label.setStyleSheet("color: #EF4444; font-size: 11px;")
     
     def _validate_path(self):
@@ -900,12 +1133,21 @@ class NS3PathDialog(QDialog):
             self._status_label.setText("")
             return
         
-        if NS3Detector.validate_ns3_path(path):
-            version = NS3Detector.get_ns3_version(path) or "unknown"
-            self._status_label.setText(f"✓ Valid ns-3 installation (version: {version})")
+        # Determine if this is a WSL path
+        use_wsl = NS3Detector.is_wsl_path(path)
+        
+        if NS3Detector.validate_ns3_path(path, use_wsl=use_wsl):
+            version = NS3Detector.get_ns3_version(path, use_wsl=use_wsl) or "unknown"
+            mode = "WSL" if use_wsl else "native"
+            self._status_label.setText(f"✓ Valid ns-3 installation (version: {version}, mode: {mode})")
             self._status_label.setStyleSheet("color: #10B981; font-size: 11px;")
         else:
-            self._status_label.setText("✗ Not a valid ns-3 installation")
+            msg = "✗ Not a valid ns-3 installation"
+            if use_wsl:
+                from services.simulation_runner import is_wsl_available
+                if not is_wsl_available():
+                    msg += " (WSL not available)"
+            self._status_label.setText(msg)
             self._status_label.setStyleSheet("color: #EF4444; font-size: 11px;")
     
     def get_path(self) -> str:

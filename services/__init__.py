@@ -6,8 +6,27 @@ from .simulation_runner import (
     NS3Detector,
     SimulationRunner,
     NS3SimulationManager,
+    is_windows,
+    is_wsl_available,
+    windows_to_wsl_path,
+    wsl_to_windows_path,
 )
 from .results_parser import ResultsParser, AsciiTraceParser, TraceEvent
+from .trace_player import (
+    TraceParser,
+    TracePlayer,
+    PacketEvent,
+    PacketEventType,
+    TraceStats,
+)
+from .settings_manager import (
+    SettingsManager,
+    AppSettings,
+    NS3Settings,
+    SimulationDefaults,
+    UISettings,
+    get_settings,
+)
 
 __all__ = [
     "ProjectManager",
@@ -17,7 +36,22 @@ __all__ = [
     "NS3Detector",
     "SimulationRunner",
     "NS3SimulationManager",
+    "is_windows",
+    "is_wsl_available",
+    "windows_to_wsl_path",
+    "wsl_to_windows_path",
     "ResultsParser",
     "AsciiTraceParser",
     "TraceEvent",
+    "TraceParser",
+    "TracePlayer",
+    "PacketEvent",
+    "PacketEventType",
+    "TraceStats",
+    "SettingsManager",
+    "AppSettings",
+    "NS3Settings",
+    "SimulationDefaults",
+    "UISettings",
+    "get_settings",
 ]

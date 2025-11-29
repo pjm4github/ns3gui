@@ -7,8 +7,8 @@ on each node that can be selected and connected.
 """
 
 import math
-from typing import Optional
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QLineF
+from typing import Optional, List
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QLineF, QTimer, QObject
 from PyQt6.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QPainterPath,
     QPolygonF, QTransform, QWheelEvent, QMouseEvent, QKeyEvent
@@ -443,6 +443,238 @@ class TempLinkItem(QGraphicsPathItem):
         self.setPath(path)
 
 
+class PacketAnimationItem(QGraphicsEllipseItem):
+    """
+    Animated packet moving along a link.
+    
+    Shows packet transmission/reception with smooth animation.
+    """
+    
+    PACKET_RADIUS = 6
+    
+    # Colors for different packet types
+    COLORS = {
+        'tx': QColor("#3B82F6"),    # Blue - transmit
+        'rx': QColor("#10B981"),    # Green - receive
+        'drop': QColor("#EF4444"),  # Red - drop
+        'default': QColor("#F59E0B"),  # Orange - default
+    }
+    
+    def __init__(
+        self, 
+        source_pos: QPointF,
+        target_pos: QPointF,
+        packet_type: str = 'tx',
+        parent: Optional[QGraphicsItem] = None
+    ):
+        r = self.PACKET_RADIUS
+        super().__init__(-r, -r, r * 2, r * 2, parent)
+        
+        self._source_pos = source_pos
+        self._target_pos = target_pos
+        self._progress = 0.0
+        
+        # Visual setup
+        color = self.COLORS.get(packet_type, self.COLORS['default'])
+        self.setBrush(QBrush(color))
+        self.setPen(QPen(color.darker(120), 1))
+        self.setZValue(50)  # Above links, below UI elements
+        
+        # Start at source
+        self.setPos(source_pos)
+        
+        # Animation
+        self._animation_timer: Optional[QTimer] = None
+        self._animation_duration_ms = 300
+        self._animation_start_time = 0
+    
+    @property
+    def progress(self) -> float:
+        return self._progress
+    
+    @progress.setter
+    def progress(self, value: float):
+        """Set position along path (0.0 = source, 1.0 = target)."""
+        self._progress = max(0.0, min(1.0, value))
+        
+        # Interpolate position
+        x = self._source_pos.x() + (self._target_pos.x() - self._source_pos.x()) * self._progress
+        y = self._source_pos.y() + (self._target_pos.y() - self._source_pos.y()) * self._progress
+        self.setPos(x, y)
+    
+    def animate(self, duration_ms: int = 300, on_complete: Optional[callable] = None):
+        """Animate packet from source to target."""
+        self._animation_duration_ms = duration_ms
+        self._on_complete = on_complete
+        self._animation_elapsed = 0
+        
+        self._animation_timer = QTimer()
+        self._animation_timer.timeout.connect(self._animate_step)
+        self._animation_timer.start(16)  # ~60fps
+    
+    def _animate_step(self):
+        """Advance animation one step."""
+        self._animation_elapsed += 16
+        t = self._animation_elapsed / self._animation_duration_ms
+        
+        if t >= 1.0:
+            self.progress = 1.0
+            self._animation_timer.stop()
+            self._animation_timer = None
+            if self._on_complete:
+                self._on_complete(self)
+        else:
+            # Ease in-out
+            t = t * t * (3 - 2 * t)
+            self.progress = t
+    
+    def stop_animation(self):
+        """Stop ongoing animation."""
+        if self._animation_timer:
+            self._animation_timer.stop()
+            self._animation_timer = None
+
+
+class PacketAnimationManager(QObject):
+    """
+    Manages multiple packet animations on the canvas.
+    
+    Coordinates packet creation, animation, and cleanup.
+    """
+    
+    def __init__(self, scene: 'TopologyScene', parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._scene = scene
+        self._active_packets: List[PacketAnimationItem] = []
+        self._max_packets = 50  # Limit for performance
+        self._enabled = True
+        self._animation_speed = 1.0
+    
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+    
+    @enabled.setter
+    def enabled(self, value: bool):
+        self._enabled = value
+        if not value:
+            self.clear_all()
+    
+    @property
+    def animation_speed(self) -> float:
+        return self._animation_speed
+    
+    @animation_speed.setter
+    def animation_speed(self, value: float):
+        self._animation_speed = max(0.1, min(10.0, value))
+    
+    def animate_packet(
+        self,
+        source_node_id: str,
+        target_node_id: str,
+        packet_type: str = 'tx',
+        duration_ms: int = 300
+    ):
+        """
+        Create and animate a packet between two nodes.
+        
+        Args:
+            source_node_id: Source node ID
+            target_node_id: Target node ID
+            packet_type: Type of packet (tx, rx, drop)
+            duration_ms: Animation duration
+        """
+        if not self._enabled:
+            return
+        
+        # Get node positions
+        source_item = self._scene._node_items.get(source_node_id)
+        target_item = self._scene._node_items.get(target_node_id)
+        
+        if not source_item or not target_item:
+            return
+        
+        source_pos = source_item.scenePos()
+        target_pos = target_item.scenePos()
+        
+        # Limit active packets
+        if len(self._active_packets) >= self._max_packets:
+            self._remove_oldest()
+        
+        # Create packet
+        packet = PacketAnimationItem(source_pos, target_pos, packet_type)
+        self._scene.addItem(packet)
+        self._active_packets.append(packet)
+        
+        # Adjust duration for speed
+        adjusted_duration = int(duration_ms / self._animation_speed)
+        
+        # Animate
+        packet.animate(adjusted_duration, self._on_packet_complete)
+    
+    def animate_packet_on_link(
+        self,
+        link_id: str,
+        direction: str = 'forward',  # 'forward' or 'backward'
+        packet_type: str = 'tx',
+        duration_ms: int = 300
+    ):
+        """
+        Animate a packet along a specific link.
+        
+        Args:
+            link_id: Link ID
+            direction: Animation direction
+            packet_type: Type of packet
+            duration_ms: Animation duration
+        """
+        if not self._enabled:
+            return
+        
+        link_item = self._scene._link_items.get(link_id)
+        if not link_item:
+            return
+        
+        if direction == 'forward':
+            source_pos = link_item.source_item.scenePos()
+            target_pos = link_item.target_item.scenePos()
+        else:
+            source_pos = link_item.target_item.scenePos()
+            target_pos = link_item.source_item.scenePos()
+        
+        # Limit active packets
+        if len(self._active_packets) >= self._max_packets:
+            self._remove_oldest()
+        
+        # Create and animate packet
+        packet = PacketAnimationItem(source_pos, target_pos, packet_type)
+        self._scene.addItem(packet)
+        self._active_packets.append(packet)
+        
+        adjusted_duration = int(duration_ms / self._animation_speed)
+        packet.animate(adjusted_duration, self._on_packet_complete)
+    
+    def _on_packet_complete(self, packet: PacketAnimationItem):
+        """Handle packet animation completion."""
+        if packet in self._active_packets:
+            self._active_packets.remove(packet)
+        self._scene.removeItem(packet)
+    
+    def _remove_oldest(self):
+        """Remove oldest packet to make room."""
+        if self._active_packets:
+            packet = self._active_packets.pop(0)
+            packet.stop_animation()
+            self._scene.removeItem(packet)
+    
+    def clear_all(self):
+        """Remove all active packets."""
+        for packet in self._active_packets[:]:
+            packet.stop_animation()
+            self._scene.removeItem(packet)
+        self._active_packets.clear()
+
+
 class TopologyScene(QGraphicsScene):
     """
     Scene managing all network topology items.
@@ -470,9 +702,17 @@ class TopologyScene(QGraphicsScene):
         self._link_source_port: Optional[PortGraphicsItem] = None
         self._selected_port: Optional[PortGraphicsItem] = None
         
+        # Packet animation manager
+        self._animation_manager = PacketAnimationManager(self)
+        
         # Setup
         self.setBackgroundBrush(COLORS["background"])
         self._draw_grid()
+    
+    @property
+    def animation_manager(self) -> PacketAnimationManager:
+        """Get the packet animation manager."""
+        return self._animation_manager
     
     def _draw_grid(self):
         """Draw background grid."""

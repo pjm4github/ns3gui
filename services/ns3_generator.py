@@ -57,7 +57,7 @@ class NS3ScriptGenerator:
             self._generate_ip_addresses(network),
             self._generate_applications(network, sim_config),
             self._generate_tracing(sim_config, output_dir),
-            self._generate_simulation_run(sim_config),
+            self._generate_simulation_run(sim_config, output_dir),
             self._generate_main_function_end(),
             self._generate_main_call(),
         ]
@@ -84,29 +84,8 @@ Simulation Duration: {sim_config.duration} seconds
     def _generate_imports(self) -> str:
         """Generate ns-3 import statements."""
         return '''
-# NS-3 imports
-try:
-    from ns import ns
-except ImportError:
-    # Alternative import for some ns-3 versions
-    import ns.core as core
-    import ns.network as network
-    import ns.internet as internet
-    import ns.point_to_point as point_to_point
-    import ns.csma as csma
-    import ns.applications as applications
-    import ns.flow_monitor as flow_monitor
-    
-    # Create ns namespace compatibility
-    class NSCompat:
-        core = core
-        network = network
-        internet = internet
-        point_to_point = point_to_point
-        csma = csma
-        applications = applications
-        flow_monitor = flow_monitor
-    ns = NSCompat()
+# NS-3 imports (ns-3.45+ with cppyy bindings)
+from ns import ns
 
 import sys
 '''
@@ -118,8 +97,8 @@ def main():
     """Run the simulation."""
     
     # Enable logging for debugging (optional)
-    # ns.core.LogComponentEnable("UdpEchoClientApplication", ns.core.LOG_LEVEL_INFO)
-    # ns.core.LogComponentEnable("UdpEchoServerApplication", ns.core.LOG_LEVEL_INFO)
+    # ns.LogComponentEnable("UdpEchoClientApplication", ns.LOG_LEVEL_INFO)
+    # ns.LogComponentEnable("UdpEchoServerApplication", ns.LOG_LEVEL_INFO)
 '''
     
     def _generate_nodes(self, network: NetworkModel) -> str:
@@ -128,7 +107,7 @@ def main():
             "    # ============================================",
             "    # Create Nodes",
             "    # ============================================",
-            f"    nodes = ns.network.NodeContainer()",
+            f"    nodes = ns.NodeContainer()",
             f"    nodes.Create({len(network.nodes)})",
             "",
             "    # Node mapping:",
@@ -149,10 +128,10 @@ def main():
             "    # ============================================",
             "    ",
             "    # Point-to-point helper for direct links",
-            "    p2p = ns.point_to_point.PointToPointHelper()",
+            "    p2p = ns.PointToPointHelper()",
             "",
             "    # CSMA helper for shared medium (switch/hub)",
-            "    csma = ns.csma.CsmaHelper()",
+            "    csma = ns.CsmaHelper()",
             "",
             "    # Store all NetDeviceContainers",
             "    all_devices = []",
@@ -173,9 +152,9 @@ def main():
             
             if link.channel_type == ChannelType.POINT_TO_POINT:
                 lines.extend([
-                    f"    p2p.SetDeviceAttribute('DataRate', ns.core.StringValue('{link.data_rate}'))",
-                    f"    p2p.SetChannelAttribute('Delay', ns.core.StringValue('{link.delay}'))",
-                    f"    link{idx}_nodes = ns.network.NodeContainer()",
+                    f"    p2p.SetDeviceAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
+                    f"    p2p.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
+                    f"    link{idx}_nodes = ns.NodeContainer()",
                     f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
                     f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
                     f"    devices{idx} = p2p.Install(link{idx}_nodes)",
@@ -184,9 +163,9 @@ def main():
                 ])
             else:  # CSMA
                 lines.extend([
-                    f"    csma.SetChannelAttribute('DataRate', ns.core.StringValue('{link.data_rate}'))",
-                    f"    csma.SetChannelAttribute('Delay', ns.core.StringValue('{link.delay}'))",
-                    f"    link{idx}_nodes = ns.network.NodeContainer()",
+                    f"    csma.SetChannelAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
+                    f"    csma.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
+                    f"    link{idx}_nodes = ns.NodeContainer()",
                     f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
                     f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
                     f"    devices{idx} = csma.Install(link{idx}_nodes)",
@@ -202,7 +181,7 @@ def main():
             "    # ============================================",
             "    # Install Internet Stack",
             "    # ============================================",
-            "    internet_stack = ns.internet.InternetStackHelper()",
+            "    internet_stack = ns.InternetStackHelper()",
             "    internet_stack.Install(nodes)",
             "",
         ]
@@ -214,7 +193,7 @@ def main():
             "    # ============================================",
             "    # Assign IP Addresses",
             "    # ============================================",
-            "    ipv4 = ns.internet.Ipv4AddressHelper()",
+            "    ipv4 = ns.Ipv4AddressHelper()",
             "",
             "    # Store interfaces for later use",
             "    all_interfaces = []",
@@ -225,7 +204,7 @@ def main():
             # Use subnet based on link index
             subnet = f"10.1.{idx + 1}.0"
             lines.extend([
-                f"    ipv4.SetBase(ns.network.Ipv4Address('{subnet}'), ns.network.Ipv4Mask('255.255.255.0'))",
+                f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('255.255.255.0'))",
                 f"    interfaces{idx} = ipv4.Assign(devices{idx})",
                 f"    all_interfaces.append(interfaces{idx})",
                 "",
@@ -330,38 +309,38 @@ def main():
         
         lines = [
             f"    # UDP Echo Server on node {target_idx}",
-            f"    echo_server{flow_idx} = ns.applications.UdpEchoServerHelper({port})",
+            f"    echo_server{flow_idx} = ns.UdpEchoServerHelper({port})",
             f"    server_apps{flow_idx} = echo_server{flow_idx}.Install(nodes.Get({target_idx}))",
-            f"    server_apps{flow_idx}.Start(ns.core.Seconds({flow.start_time - 0.5}))",
-            f"    server_apps{flow_idx}.Stop(ns.core.Seconds({flow.stop_time + 0.5}))",
+            f"    server_apps{flow_idx}.Start(ns.Seconds({flow.start_time - 0.5}))",
+            f"    server_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time + 0.5}))",
             "",
             f"    # UDP Echo Client on node {source_idx}",
-            f"    echo_client{flow_idx} = ns.applications.UdpEchoClientHelper(",
+            f"    echo_client{flow_idx} = ns.UdpEchoClientHelper(",
             f"        interfaces{target_link_idx}.GetAddress({interface_idx}), {port})",
-            f"    echo_client{flow_idx}.SetAttribute('MaxPackets', ns.core.UintegerValue({flow.echo_packets}))",
-            f"    echo_client{flow_idx}.SetAttribute('Interval', ns.core.TimeValue(ns.core.Seconds({flow.echo_interval})))",
-            f"    echo_client{flow_idx}.SetAttribute('PacketSize', ns.core.UintegerValue({flow.packet_size}))",
+            f"    echo_client{flow_idx}.SetAttribute('MaxPackets', ns.UintegerValue({flow.echo_packets}))",
+            f"    echo_client{flow_idx}.SetAttribute('Interval', ns.TimeValue(ns.Seconds({flow.echo_interval})))",
+            f"    echo_client{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({flow.packet_size}))",
             f"    client_apps{flow_idx} = echo_client{flow_idx}.Install(nodes.Get({source_idx}))",
-            f"    client_apps{flow_idx}.Start(ns.core.Seconds({flow.start_time}))",
-            f"    client_apps{flow_idx}.Stop(ns.core.Seconds({flow.stop_time}))",
+            f"    client_apps{flow_idx}.Start(ns.Seconds({flow.start_time}))",
+            f"    client_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
             "",
             "    # ----------------------------------------",
             "    # Alternative traffic generators (commented out):",
             "    # ----------------------------------------",
             "    # OnOff Application (constant bitrate with on/off periods):",
-            "    # onoff = ns.applications.OnOffHelper('ns3::UdpSocketFactory',",
-            "    #     ns.network.InetSocketAddress(target_addr, port))",
-            "    # onoff.SetAttribute('DataRate', ns.core.StringValue('1Mbps'))",
-            "    # onoff.SetAttribute('PacketSize', ns.core.UintegerValue(1024))",
+            "    # onoff = ns.OnOffHelper('ns3::UdpSocketFactory',",
+            "    #     ns.InetSocketAddress(target_addr, port))",
+            "    # onoff.SetAttribute('DataRate', ns.StringValue('1Mbps'))",
+            "    # onoff.SetAttribute('PacketSize', ns.UintegerValue(1024))",
             "    #",
             "    # Bulk Send Application (TCP bulk transfer):",
-            "    # bulk = ns.applications.BulkSendHelper('ns3::TcpSocketFactory',",
-            "    #     ns.network.InetSocketAddress(target_addr, port))",
-            "    # bulk.SetAttribute('MaxBytes', ns.core.UintegerValue(0))  # unlimited",
+            "    # bulk = ns.BulkSendHelper('ns3::TcpSocketFactory',",
+            "    #     ns.InetSocketAddress(target_addr, port))",
+            "    # bulk.SetAttribute('MaxBytes', ns.UintegerValue(0))  # unlimited",
             "    #",
             "    # Packet Sink (receiver for OnOff/BulkSend):",
-            "    # sink = ns.applications.PacketSinkHelper('ns3::UdpSocketFactory',",
-            "    #     ns.network.InetSocketAddress(ns.network.Ipv4Address.GetAny(), port))",
+            "    # sink = ns.PacketSinkHelper('ns3::UdpSocketFactory',",
+            "    #     ns.InetSocketAddress(ns.Ipv4Address.GetAny(), port))",
             "    # ----------------------------------------",
             "",
         ]
@@ -374,12 +353,66 @@ def main():
             "    # Setup Tracing and Monitoring",
             "    # ============================================",
             "",
+            "    # Packet trace callback for GUI visualization",
+            "    packet_uid_counter = [0]  # Use list for mutable closure",
+            "    ",
+            "    def trace_tx(context, packet):",
+            "        # Parse context to get node and device",
+            "        # Context format: /NodeList/n/DeviceList/d/...",
+            "        try:",
+            "            parts = context.split('/')",
+            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
+            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
+            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
+            "            size = packet.GetSize()",
+            "            uid = packet_uid_counter[0]",
+            "            packet_uid_counter[0] += 1",
+            "            # Format: PKT|time_ns|event|node|device|size|src_node|dst_node|link_id|protocol",
+            "            print(f'PKT|{time_ns}|TX|{node_idx}|{dev_idx}|{size}|-1|-1||UDP')",
+            "        except:",
+            "            pass",
+            "    ",
+            "    def trace_rx(context, packet):",
+            "        try:",
+            "            parts = context.split('/')",
+            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
+            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
+            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
+            "            size = packet.GetSize()",
+            "            print(f'PKT|{time_ns}|RX|{node_idx}|{dev_idx}|{size}|-1|-1||UDP')",
+            "        except:",
+            "            pass",
+            "    ",
+            "    def trace_drop(context, packet):",
+            "        try:",
+            "            parts = context.split('/')",
+            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
+            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
+            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
+            "            size = packet.GetSize()",
+            "            print(f'PKT|{time_ns}|DROP|{node_idx}|{dev_idx}|{size}|-1|-1||')",
+            "        except:",
+            "            pass",
+            "    ",
+            "    # Connect trace callbacks",
+            "    # Note: In ns-3 Python bindings, we use Config.Connect or device-specific callbacks",
+            "    # For now, we'll use the MacTx and MacRx callbacks if available",
+            "    try:",
+            "        ns.Config.ConnectWithoutContext(",
+            "            '/NodeList/*/DeviceList/*/$ns3::PointToPointNetDevice/MacTx',",
+            "            ns.MakeCallback(trace_tx))",
+            "        ns.Config.ConnectWithoutContext(",
+            "            '/NodeList/*/DeviceList/*/$ns3::PointToPointNetDevice/MacRx',",
+            "            ns.MakeCallback(trace_rx))",
+            "    except Exception as e:",
+            "        print(f'Note: Could not connect packet trace callbacks: {e}')",
+            "",
         ]
         
         if sim_config.enable_ascii_trace:
             lines.extend([
                 "    # ASCII Trace",
-                f"    ascii_trace = ns.network.AsciiTraceHelper()",
+                f"    ascii_trace = ns.AsciiTraceHelper()",
                 f"    p2p.EnableAsciiAll(ascii_trace.CreateFileStream('{output_dir}/trace.tr'))",
                 "",
             ])
@@ -394,25 +427,25 @@ def main():
         if sim_config.enable_flow_monitor:
             lines.extend([
                 "    # Flow Monitor for statistics",
-                "    flow_helper = ns.flow_monitor.FlowMonitorHelper()",
+                "    flow_helper = ns.FlowMonitorHelper()",
                 "    flow_monitor = flow_helper.InstallAll()",
                 "",
             ])
         
         return "\n".join(lines)
     
-    def _generate_simulation_run(self, sim_config: SimulationConfig) -> str:
+    def _generate_simulation_run(self, sim_config: SimulationConfig, output_dir: str) -> str:
         """Generate simulation run code."""
         lines = [
             "    # ============================================",
             "    # Run Simulation",
             "    # ============================================",
-            f"    ns.core.Simulator.Stop(ns.core.Seconds({sim_config.duration}))",
+            f"    ns.Simulator.Stop(ns.Seconds({sim_config.duration}))",
             "",
-            "    print(f'Starting simulation for {sim_config.duration} seconds...')",
+            f"    print('Starting simulation for {sim_config.duration} seconds...')",
             "    print()",
             "",
-            "    ns.core.Simulator.Run()",
+            "    ns.Simulator.Run()",
             "",
         ]
         
@@ -470,12 +503,12 @@ def main():
                 "",
                 "    # Save flow monitor results to XML",
                 f"    flow_monitor.SerializeToXmlFile('{output_dir}/flowmon-results.xml', True, True)",
-                "    print(f'Flow monitor results saved to: {output_dir}/flowmon-results.xml')",
+                f"    print('Flow monitor results saved to: {output_dir}/flowmon-results.xml')",
                 "",
             ])
         
         lines.extend([
-            "    ns.core.Simulator.Destroy()",
+            "    ns.Simulator.Destroy()",
             "    print('\\nSimulation completed successfully.')",
             "",
         ])
