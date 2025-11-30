@@ -55,6 +55,7 @@ class NS3ScriptGenerator:
             self._generate_channels(network),
             self._generate_internet_stack(network),
             self._generate_ip_addresses(network),
+            self._generate_routing(network),
             self._generate_applications(network, sim_config),
             self._generate_tracing(sim_config, output_dir),
             self._generate_simulation_run(sim_config, output_dir),
@@ -357,6 +358,77 @@ def main():
         
         lines.append("    print()")
         lines.append("")
+        return "\n".join(lines)
+    
+    def _generate_routing(self, network: NetworkModel) -> str:
+        """Generate routing configuration."""
+        # Check if we have routers that need routing
+        has_routers = any(
+            node.node_type == NodeType.ROUTER 
+            for node in network.nodes.values()
+        )
+        
+        lines = [
+            "    # ============================================",
+            "    # Configure Routing",
+            "    # ============================================",
+        ]
+        
+        if has_routers:
+            # Use global routing - automatically computes shortest paths
+            lines.extend([
+                "    # Enable global routing (automatically computes routes)",
+                "    ns.Ipv4GlobalRoutingHelper.PopulateRoutingTables()",
+                "    print('Routing tables populated via global routing')",
+                "",
+                "    # Print routing tables",
+                "    print('\\n' + '=' * 60)",
+                "    print('ROUTING TABLES')",
+                "    print('=' * 60)",
+                "",
+            ])
+            
+            # Print routing info for each node based on its interfaces
+            for node_id, node in network.nodes.items():
+                node_idx = self._node_index_map.get(node_id, 0)
+                
+                # Find all links connected to this node
+                connected_links = []
+                for link_idx, (link_id, link) in enumerate(network.links.items()):
+                    if link.source_node_id == node_id:
+                        connected_links.append((link_idx, True))  # True = node is source
+                    elif link.target_node_id == node_id:
+                        connected_links.append((link_idx, False))  # False = node is target
+                
+                lines.append(f"    print(f'\\nNode {node_idx} ({node.name}):')")
+                lines.append(f"    print('-' * 40)")
+                
+                if node.node_type == NodeType.ROUTER:
+                    # Router - show all directly connected networks
+                    for link_idx, is_source in connected_links:
+                        iface_idx = 0 if is_source else 1
+                        lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (interface {link_idx + 1})')")
+                else:
+                    # Host - show local network and routes through router
+                    if connected_links:
+                        link_idx, is_source = connected_links[0]
+                        # Local network
+                        lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (local)')")
+                        # Default route to router
+                        gateway_idx = 1 if is_source else 0
+                        lines.append(f"    print(f'  0.0.0.0/0 via 10.1.{link_idx + 1}.{2 if is_source else 1} (default)')")
+                
+                lines.append("")
+            
+            lines.append("    print()")
+            lines.append("")
+        else:
+            lines.extend([
+                "    # No routers - no explicit routing needed",
+                "    # (direct links or bridged network)",
+                "",
+            ])
+        
         return "\n".join(lines)
     
     def _generate_applications(self, network: NetworkModel, sim_config: SimulationConfig) -> str:

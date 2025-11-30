@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QGridLayout, QProgressBar, QSizePolicy,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-    QTextEdit, QScrollArea, QPushButton
+    QTextEdit, QScrollArea, QPushButton, QTreeWidget, QTreeWidgetItem
 )
 
 from models import (
@@ -304,6 +304,192 @@ class ConsoleTab(QWidget):
         self._console.clear()
 
 
+class RoutingTab(QWidget):
+    """Routing tables tab."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(8)
+        
+        # Tree widget for routing tables
+        self._tree = QTreeWidget()
+        self._tree.setHeaderLabels(["Destination", "Gateway", "Interface"])
+        self._tree.setStyleSheet("""
+            QTreeWidget {
+                background: white;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+            }
+            QTreeWidget::item {
+                padding: 4px;
+            }
+            QTreeWidget::item:selected {
+                background: #EFF6FF;
+                color: #1E40AF;
+            }
+            QHeaderView::section {
+                background: #F9FAFB;
+                border: none;
+                border-bottom: 1px solid #E5E7EB;
+                padding: 8px;
+                font-weight: 600;
+                color: #374151;
+            }
+        """)
+        self._tree.setAlternatingRowColors(True)
+        
+        header = self._tree.header()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        
+        layout.addWidget(self._tree)
+        
+        # Empty state label
+        self._empty_label = QLabel("No routing information available.\nRun a simulation with routers to see routing tables.")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 12px; padding: 40px;")
+        layout.addWidget(self._empty_label)
+        
+        self._tree.hide()
+    
+    def parse_and_display(self, console_output: str):
+        """Parse routing tables from console output and display them."""
+        self._tree.clear()
+        
+        # Parse routing table section from output
+        import re
+        
+        # Find the ROUTING TABLES section
+        in_routing = False
+        past_header = False  # Track if we're past the header separator
+        current_node = None
+        routes_found = False
+        
+        lines = console_output.split('\n')
+        
+        for line in lines:
+            # Detect start of routing tables section
+            if "ROUTING TABLES" in line:
+                in_routing = True
+                past_header = False
+                continue
+            
+            # Skip the separator line right after "ROUTING TABLES"
+            if in_routing and not past_header:
+                if line.strip().startswith('='):
+                    past_header = True
+                    continue
+            
+            # Detect end of routing section (next major section like "Flow 0:" or "SIMULATION RESULTS")
+            if in_routing and past_header:
+                if line.startswith("Flow ") or "SIMULATION RESULTS" in line:
+                    in_routing = False
+                    continue
+                # Another === line after we've seen nodes means end of section
+                if line.strip().startswith('=') and current_node is not None:
+                    in_routing = False
+                    continue
+            
+            if not in_routing:
+                continue
+            
+            # Skip separator lines (dashes)
+            if line.strip().startswith('-'):
+                continue
+            
+            # Parse node header: "Node 0 (host_01d2):"
+            node_match = re.match(r"Node (\d+) \(([^)]+)\):", line)
+            if node_match:
+                node_idx = node_match.group(1)
+                node_name = node_match.group(2)
+                
+                # Create tree item for this node
+                node_item = QTreeWidgetItem([f"Node {node_idx}: {node_name}", "", ""])
+                node_item.setExpanded(True)
+                font = node_item.font(0)
+                font.setBold(True)
+                node_item.setFont(0, font)
+                self._tree.addTopLevelItem(node_item)
+                current_node = node_item
+                continue
+            
+            # Parse route entries in various formats:
+            # Format 1: "10.1.2.0/24 via direct (local)"
+            # Format 2: "0.0.0.0/0 via 10.1.2.2 (default)"
+            # Format 3: "10.1.1.0/24 via direct (interface 1)"
+            route_match = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)/(\d+)\s+via\s+(\S+)\s*\(([^)]+)\)", line)
+            if route_match and current_node:
+                dest = route_match.group(1)
+                cidr = route_match.group(2)
+                gateway = route_match.group(3)
+                route_type = route_match.group(4)
+                
+                dest_display = f"{dest}/{cidr}"
+                
+                # Gateway display
+                if gateway == "direct":
+                    gateway_display = "direct"
+                else:
+                    gateway_display = gateway
+                
+                route_item = QTreeWidgetItem([dest_display, gateway_display, route_type])
+                current_node.addChild(route_item)
+                routes_found = True
+                continue
+            
+            # Also try simpler format without parentheses
+            # Format: "  10.1.1.0/24 via 10.1.1.2 dev if1"
+            route_match2 = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)/(\S+)\s+via\s+(\S+)\s+dev\s+(\S+)", line)
+            if route_match2 and current_node:
+                dest = route_match2.group(1)
+                mask = route_match2.group(2)
+                gateway = route_match2.group(3)
+                interface = route_match2.group(4)
+                
+                # Convert mask to CIDR if needed
+                if '.' in mask:
+                    cidr = self._mask_to_cidr(mask)
+                else:
+                    cidr = mask
+                
+                dest_display = f"{dest}/{cidr}"
+                gateway_display = "direct" if gateway == "0.0.0.0" else gateway
+                
+                route_item = QTreeWidgetItem([dest_display, gateway_display, interface])
+                current_node.addChild(route_item)
+                routes_found = True
+        
+        if routes_found:
+            self._empty_label.hide()
+            self._tree.show()
+            self._tree.expandAll()
+        else:
+            self._tree.hide()
+            self._empty_label.show()
+    
+    def _mask_to_cidr(self, mask: str) -> str:
+        """Convert subnet mask to CIDR notation."""
+        try:
+            parts = mask.split('.')
+            binary = ''.join(format(int(p), '08b') for p in parts)
+            return str(binary.count('1'))
+        except:
+            return mask
+    
+    def reset(self):
+        """Reset to initial state."""
+        self._tree.clear()
+        self._tree.hide()
+        self._empty_label.show()
+
+
 class StatsPanel(QWidget):
     """
     Panel displaying simulation statistics.
@@ -408,6 +594,9 @@ class StatsPanel(QWidget):
         self._flows_tab = FlowsTab()
         self._tabs.addTab(self._flows_tab, "Flows")
         
+        self._routing_tab = RoutingTab()
+        self._tabs.addTab(self._routing_tab, "Routing")
+        
         self._console_tab = ConsoleTab()
         self._tabs.addTab(self._console_tab, "Console")
         
@@ -450,6 +639,9 @@ class StatsPanel(QWidget):
         # Update flows table
         self._flows_tab.update_flows(results.flow_stats)
         
+        # Update routing tables
+        self._routing_tab.parse_and_display(results.console_output)
+        
         # Update console
         self._console_tab.set_text(results.console_output)
         
@@ -467,6 +659,7 @@ class StatsPanel(QWidget):
         self.set_progress(0, 10)
         self._summary_tab.reset()
         self._flows_tab.reset()
+        self._routing_tab.reset()
         self._console_tab.reset()
     
     def connect_state(self, state: SimulationState):
