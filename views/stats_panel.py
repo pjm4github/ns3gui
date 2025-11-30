@@ -240,25 +240,72 @@ class FlowsTab(QWidget):
 
 
 class ConsoleTab(QWidget):
-    """Console output tab."""
+    """Console output tab with timestamps and log levels."""
+    
+    # Log level colors
+    LOG_COLORS = {
+        'ERROR': '#EF4444',    # Red
+        'WARN': '#F59E0B',     # Orange
+        'WARNING': '#F59E0B',  # Orange
+        'INFO': '#3B82F6',     # Blue
+        'DEBUG': '#6B7280',    # Gray
+        'SUCCESS': '#10B981',  # Green
+        'SIM': '#8B5CF6',      # Purple - simulation output
+    }
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
+        self._start_time = None
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 0)
         layout.setSpacing(8)
         
+        # Toolbar
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(8)
+        
+        # Filter buttons
+        self._show_errors = QPushButton("Errors")
+        self._show_errors.setCheckable(True)
+        self._show_errors.setChecked(True)
+        self._show_errors.setStyleSheet(self._get_filter_btn_style('#EF4444'))
+        toolbar_layout.addWidget(self._show_errors)
+        
+        self._show_warnings = QPushButton("Warnings")
+        self._show_warnings.setCheckable(True)
+        self._show_warnings.setChecked(True)
+        self._show_warnings.setStyleSheet(self._get_filter_btn_style('#F59E0B'))
+        toolbar_layout.addWidget(self._show_warnings)
+        
+        self._show_info = QPushButton("Info")
+        self._show_info.setCheckable(True)
+        self._show_info.setChecked(True)
+        self._show_info.setStyleSheet(self._get_filter_btn_style('#3B82F6'))
+        toolbar_layout.addWidget(self._show_info)
+        
+        toolbar_layout.addStretch()
+        
+        # Auto-scroll checkbox
+        from PyQt6.QtWidgets import QCheckBox
+        self._auto_scroll = QCheckBox("Auto-scroll")
+        self._auto_scroll.setChecked(True)
+        self._auto_scroll.setStyleSheet("color: #6B7280;")
+        toolbar_layout.addWidget(self._auto_scroll)
+        
+        layout.addLayout(toolbar_layout)
+        
         # Console output
         self._console = QTextEdit()
         self._console.setReadOnly(True)
-        self._console.setFont(QFont("Menlo", 10))
         self._console.setStyleSheet("""
             QTextEdit {
                 background: #1F2937;
-                color: #E5E7EB;
+                color: #F3F4F6;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 12px;
                 border: 1px solid #374151;
                 border-radius: 6px;
                 padding: 8px;
@@ -266,9 +313,27 @@ class ConsoleTab(QWidget):
         """)
         layout.addWidget(self._console)
         
-        # Clear button
+        # Button row
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+        
         btn_layout.addStretch()
+        
+        copy_btn = QPushButton("Copy All")
+        copy_btn.setStyleSheet("""
+            QPushButton {
+                background: #374151;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #4B5563;
+            }
+        """)
+        copy_btn.clicked.connect(self._copy_all)
+        btn_layout.addWidget(copy_btn)
         
         clear_btn = QPushButton("Clear")
         clear_btn.setStyleSheet("""
@@ -283,25 +348,111 @@ class ConsoleTab(QWidget):
                 background: #4B5563;
             }
         """)
-        clear_btn.clicked.connect(self._console.clear)
+        clear_btn.clicked.connect(self.reset)
         btn_layout.addWidget(clear_btn)
         
         layout.addLayout(btn_layout)
     
+    def _get_filter_btn_style(self, color: str) -> str:
+        return f"""
+            QPushButton {{
+                background: transparent;
+                color: {color};
+                border: 1px solid {color};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }}
+            QPushButton:checked {{
+                background: {color};
+                color: white;
+            }}
+            QPushButton:hover {{
+                background: {color}20;
+            }}
+        """
+    
+    def _copy_all(self):
+        """Copy all console text to clipboard."""
+        from PyQt6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self._console.toPlainText())
+    
+    def start_session(self):
+        """Start a new logging session."""
+        from datetime import datetime
+        self._start_time = datetime.now()
+        self._console.clear()
+        self.log("INFO", f"Session started at {self._start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log("INFO", "-" * 50)
+    
+    def log(self, level: str, message: str):
+        """Add a log message with level and timestamp."""
+        from datetime import datetime
+        
+        level = level.upper()
+        color = self.LOG_COLORS.get(level, '#F3F4F6')
+        
+        # Calculate elapsed time
+        if self._start_time:
+            elapsed = (datetime.now() - self._start_time).total_seconds()
+            timestamp = f"[{elapsed:7.2f}s]"
+        else:
+            timestamp = f"[{datetime.now().strftime('%H:%M:%S')}]"
+        
+        # Format the log line with HTML
+        level_tag = f'<span style="color: {color}; font-weight: bold;">[{level:5}]</span>'
+        time_tag = f'<span style="color: #9CA3AF;">{timestamp}</span>'
+        msg_color = color if level in ('ERROR', 'WARN', 'WARNING') else '#F3F4F6'
+        msg_tag = f'<span style="color: {msg_color};">{self._escape_html(message)}</span>'
+        
+        html = f'{time_tag} {level_tag} {msg_tag}'
+        self._console.append(html)
+        
+        # Auto-scroll if enabled
+        if self._auto_scroll.isChecked():
+            scrollbar = self._console.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+    
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters."""
+        return (text
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+        )
+    
     def append_line(self, text: str):
-        """Append a line to the console."""
-        self._console.append(text)
-        # Auto-scroll to bottom
-        scrollbar = self._console.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        """Append a line to the console (auto-detect level)."""
+        text = text.strip()
+        if not text:
+            return
+        
+        # Auto-detect log level from content
+        text_lower = text.lower()
+        if 'error' in text_lower or 'failed' in text_lower or 'exception' in text_lower:
+            level = 'ERROR'
+        elif 'warn' in text_lower:
+            level = 'WARN'
+        elif 'success' in text_lower or 'completed' in text_lower:
+            level = 'SUCCESS'
+        elif text.startswith('Simulator') or text.startswith('Node') or 'routing' in text_lower:
+            level = 'SIM'
+        else:
+            level = 'INFO'
+        
+        self.log(level, text)
     
     def set_text(self, text: str):
         """Set the entire console text."""
-        self._console.setText(text)
+        self.reset()
+        for line in text.split('\n'):
+            self.append_line(line)
     
     def reset(self):
-        """Clear console."""
+        """Clear console and reset session."""
         self._console.clear()
+        self._start_time = None
 
 
 class RoutingTab(QWidget):
@@ -652,6 +803,14 @@ class StatsPanel(QWidget):
     def append_console_line(self, line: str):
         """Append a line to the console output."""
         self._console_tab.append_line(line)
+    
+    def log_console(self, level: str, message: str):
+        """Log a message with specified level to the console."""
+        self._console_tab.log(level, message)
+    
+    def start_console_session(self):
+        """Start a new console logging session."""
+        self._console_tab.start_session()
     
     def reset(self):
         """Reset all displays to initial state."""

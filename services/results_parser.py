@@ -121,20 +121,33 @@ class ResultsParser:
         import re
         flows = []
         
-        # Split into flow blocks
-        flow_blocks = re.split(r"Flow (\d+)", output)
+        # Find the SIMULATION RESULTS section
+        results_start = output.find("SIMULATION RESULTS")
+        if results_start == -1:
+            results_start = output.find("Flow Statistics")
+        if results_start == -1:
+            results_start = 0
         
-        i = 1
-        while i < len(flow_blocks) - 1:
-            flow_id = int(flow_blocks[i])
-            block = flow_blocks[i + 1]
+        # Extract just the results section
+        results_section = output[results_start:]
+        
+        # Split into flow blocks - look for "Flow N" pattern
+        flow_pattern = re.compile(r'Flow\s+(\d+)\s*\((\w+)\)')
+        matches = list(flow_pattern.finditer(results_section))
+        
+        for i, match in enumerate(matches):
+            flow_id = int(match.group(1))
+            protocol_str = match.group(2)
+            
+            # Get the block for this flow (up to next flow or end)
+            start_pos = match.end()
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(results_section)
+            block = results_section[start_pos:end_pos]
             
             stats = FlowStats(flow_id=flow_id)
             
             # Parse protocol
-            proto_match = re.search(r"\((UDP|TCP)\)", block)
-            if proto_match:
-                stats.protocol = 17 if proto_match.group(1) == "UDP" else 6
+            stats.protocol = 17 if protocol_str.upper() == "UDP" else 6 if protocol_str.upper() == "TCP" else 0
             
             # Parse addresses
             addr_match = re.search(r"(\d+\.\d+\.\d+\.\d+):(\d+)\s*->\s*(\d+\.\d+\.\d+\.\d+):(\d+)", block)
@@ -162,13 +175,33 @@ class ResultsParser:
             if rx_bytes_match:
                 stats.rx_bytes = int(rx_bytes_match.group(1))
             
-            # Parse lost packets
+            # Parse lost packets - handle both formats
             lost_match = re.search(r"Lost Packets:\s*(\d+)", block)
             if lost_match:
                 stats.lost_packets = int(lost_match.group(1))
             
+            # Parse throughput (if available)
+            throughput_match = re.search(r"Throughput:\s*([\d.]+)\s*Mbps", block)
+            if throughput_match:
+                # Store as derived property - throughput_mbps is calculated
+                pass  # FlowStats calculates this from bytes and time
+            
+            # Parse delay (if available)
+            delay_match = re.search(r"Mean Delay:\s*([\d.]+)\s*ms", block)
+            if delay_match:
+                delay_ms = float(delay_match.group(1))
+                # Convert to nanoseconds for the delay_sum field
+                if stats.rx_packets > 0:
+                    stats.delay_sum_ns = int(delay_ms * 1_000_000 * stats.rx_packets)
+            
+            # Parse jitter (if available)
+            jitter_match = re.search(r"Mean Jitter:\s*([\d.]+)\s*ms", block)
+            if jitter_match:
+                jitter_ms = float(jitter_match.group(1))
+                if stats.rx_packets > 1:
+                    stats.jitter_sum_ns = int(jitter_ms * 1_000_000 * (stats.rx_packets - 1))
+            
             flows.append(stats)
-            i += 2
         
         return flows
 

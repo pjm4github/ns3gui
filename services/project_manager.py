@@ -64,9 +64,17 @@ class ProjectManager:
             self._current_file = filepath
             return True
             
+        except PermissionError:
+            print(f"Permission denied when saving to: {filepath}")
+            raise PermissionError(f"Permission denied: Cannot write to {filepath}")
+        except OSError as e:
+            print(f"OS error saving project: {e}")
+            raise OSError(f"Cannot save file: {e}")
         except Exception as e:
             print(f"Error saving project: {e}")
-            return False
+            import traceback
+            traceback.print_exc()
+            raise
     
     def load(self, filepath: Path) -> Optional[NetworkModel]:
         """
@@ -77,18 +85,42 @@ class ProjectManager:
             
         Returns:
             NetworkModel if successful, None otherwise
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            json.JSONDecodeError: If file contains invalid JSON
+            ValueError: If file format is invalid
         """
         try:
+            if not filepath.exists():
+                raise FileNotFoundError(f"File not found: {filepath}")
+            
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            # Validate basic structure
+            if not isinstance(data, dict):
+                raise ValueError("Invalid file format: expected JSON object")
+            
+            if "topology" not in data:
+                raise ValueError("Invalid file format: missing 'topology' section")
             
             network = self._deserialize_network(data)
             self._current_file = filepath
             return network
             
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON in file: {e}")
+            raise ValueError(f"Invalid JSON format: {e}")
+        except FileNotFoundError:
+            raise
+        except ValueError:
+            raise
         except Exception as e:
             print(f"Error loading project: {e}")
-            return None
+            import traceback
+            traceback.print_exc()
+            raise ValueError(f"Error loading file: {e}")
     
     def _serialize_network(self, network: NetworkModel) -> dict:
         """Convert NetworkModel to JSON-serializable dictionary."""

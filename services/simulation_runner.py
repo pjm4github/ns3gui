@@ -706,16 +706,36 @@ class NS3SimulationManager(QObject):
             results.success = True
             
             # Parse FlowMonitor results if available
-            flowmon_path = os.path.join(self._output_dir, "flowmon-results.xml")
-            print(f"Looking for flowmon at: {flowmon_path}")
-            print(f"File exists: {os.path.isfile(flowmon_path)}")
+            # Check multiple possible locations for the flowmon file
+            possible_paths = [
+                os.path.join(self._output_dir, "flowmon-results.xml"),
+            ]
             
-            if os.path.isfile(flowmon_path):
+            # For WSL, also check the ns-3 directory
+            if self._use_wsl and self._ns3_path:
+                # Convert ns3 path to Windows if it's a WSL path
+                if self._ns3_path.startswith('/'):
+                    # Convert /home/user/... to check if there's a Windows equivalent
+                    ns3_win = wsl_to_windows_path(self._ns3_path)
+                    if os.path.exists(ns3_win):
+                        possible_paths.append(os.path.join(ns3_win, "flowmon-results.xml"))
+                        possible_paths.append(os.path.join(ns3_win, "scratch", "flowmon-results.xml"))
+            
+            flowmon_path = None
+            for path in possible_paths:
+                print(f"Checking for flowmon at: {path}")
+                if os.path.isfile(path):
+                    flowmon_path = path
+                    print(f"Found flowmon at: {path}")
+                    break
+            
+            if flowmon_path:
                 parser = ResultsParser()
                 results.flow_stats = parser.parse_flow_monitor_xml(flowmon_path)
                 print(f"Parsed {len(results.flow_stats)} flows from XML")
             else:
                 # Try parsing from console output as fallback
+                print("Flowmon XML not found, parsing from console output...")
                 parser = ResultsParser()
                 results.flow_stats = parser.parse_console_output(output)
                 print(f"Parsed {len(results.flow_stats)} flows from console")

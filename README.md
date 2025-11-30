@@ -31,7 +31,11 @@ A visual interface for designing and simulating network topologies using the ns-
 - Routing table display
 - Console output with simulation logs
 
-## Installation
+## Installation & Setup
+
+For detailed installation instructions, including ns-3 setup and platform-specific guidance, see **[SETUP.md](SETUP.md)**.
+
+### Quick Start
 
 ```bash
 # Create virtual environment
@@ -42,21 +46,8 @@ venv\Scripts\activate  # Windows
 
 # Install dependencies
 pip install -r requirements.txt
-```
 
-### ns-3 Setup (for simulation)
-
-1. Install ns-3 following the [official guide](https://www.nsnam.org/wiki/Installation)
-2. Build with Python bindings enabled:
-   ```bash
-   ./ns3 configure --enable-python-bindings
-   ./ns3 build
-   ```
-3. The GUI will auto-detect ns-3 or you can configure the path manually
-
-## Running
-
-```bash
+# Run the application
 python main.py
 ```
 
@@ -144,6 +135,8 @@ Flows can be saved with the topology file so they persist across sessions:
 ns3_gui_mvp/
 ├── main.py                 # Application entry point
 ├── requirements.txt        # Python dependencies
+├── SETUP.md                # Detailed setup instructions
+├── LICENSE                 # License file
 ├── models/
 │   ├── network.py          # NetworkModel, NodeModel, LinkModel, PortConfig, RouteEntry
 │   └── simulation.py       # SimulationConfig, TrafficFlow, FlowStats
@@ -305,4 +298,4 @@ Python scripts compatible with ns-3's Python bindings, placed in `scratch/gui_si
 
 ## License
 
-MIT
+This project is licensed under the terms specified in the [LICENSE](LICENSE) file.

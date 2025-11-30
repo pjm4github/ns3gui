@@ -727,6 +727,17 @@ class MainWindow(QMainWindow):
     def _on_simulation_started(self):
         """Handle simulation start."""
         self.statusBar().showMessage("Simulation running...")
+        
+        # Start console logging session
+        self.stats_panel.start_console_session()
+        self.stats_panel.log_console("INFO", "Simulation started")
+        self.stats_panel.log_console("INFO", f"Duration: {self.sim_config.duration}s")
+        self.stats_panel.log_console("INFO", f"Flows: {len(self.sim_config.flows)}")
+        
+        # Reset stats and set running status
+        self.stats_panel.set_status(SimulationStatus.RUNNING)
+        self.stats_panel.set_progress(0, self.sim_config.duration)
+        
         # Clear any previous trace
         self.trace_player.stop()
         self.playback_controls.setVisible(False)
@@ -738,6 +749,14 @@ class MainWindow(QMainWindow):
         if results.success:
             self.simulation_state.status = SimulationStatus.COMPLETED
             self.simulation_state.set_results(results)
+            self.stats_panel.set_status(SimulationStatus.COMPLETED)
+            self.stats_panel.set_progress(self.sim_config.duration, self.sim_config.duration)
+            
+            # Log success
+            self.stats_panel.log_console("SUCCESS", "Simulation completed successfully")
+            if results.flow_stats:
+                self.stats_panel.log_console("INFO", f"Collected stats for {len(results.flow_stats)} flow(s)")
+            
             self.statusBar().showMessage("Simulation completed successfully", 5000)
             
             # Load trace for playback if we have packet events
@@ -746,29 +765,62 @@ class MainWindow(QMainWindow):
                 if loaded and self.trace_player.event_count > 0:
                     self.playback_controls.setVisible(True)
                     self.playback_controls.on_trace_loaded()
+                    self.stats_panel.log_console("INFO", f"Loaded {self.trace_player.event_count} packet events for replay")
                     self.statusBar().showMessage(
                         f"Loaded {self.trace_player.event_count} packet events for replay", 
                         5000
                     )
         else:
             self.simulation_state.set_error(results.error_message)
+            self.stats_panel.set_status(SimulationStatus.ERROR)
+            self.stats_panel.log_console("ERROR", f"Simulation failed: {results.error_message}")
             self.statusBar().showMessage(f"Simulation failed: {results.error_message}", 5000)
     
     def _on_simulation_error(self, error_msg: str):
         """Handle simulation error."""
         self.toolbar.set_running(False)
         self.simulation_state.set_error(error_msg)
-        QMessageBox.warning(self, "Simulation Error", error_msg)
+        self.stats_panel.set_status(SimulationStatus.ERROR)
+        self.stats_panel.log_console("ERROR", error_msg)
+        
+        # Show detailed error dialog
+        error_dialog = QMessageBox(self)
+        error_dialog.setIcon(QMessageBox.Icon.Warning)
+        error_dialog.setWindowTitle("Simulation Error")
+        error_dialog.setText("The simulation encountered an error.")
+        error_dialog.setInformativeText(error_msg)
+        error_dialog.setDetailedText(
+            "Possible causes:\n"
+            "- Invalid topology configuration\n"
+            "- ns-3 script generation error\n"
+            "- ns-3 runtime error\n"
+            "- Missing ns-3 modules\n\n"
+            "Check the Console tab for more details."
+        )
+        error_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        error_dialog.exec()
     
     def _on_simulation_output(self, line: str):
         """Handle simulation output line."""
         self.stats_panel.append_console_line(line)
+        
+        # Try to extract progress from output (e.g., "Time: 5.0s")
+        if "Time:" in line or "time=" in line.lower():
+            import re
+            match = re.search(r'[Tt]ime[=:]\s*(\d+\.?\d*)', line)
+            if match:
+                try:
+                    current_time = float(match.group(1))
+                    self.stats_panel.set_progress(current_time, self.sim_config.duration)
+                except ValueError:
+                    pass
     
     def _on_simulation_progress(self, progress: int):
         """Handle simulation progress update."""
         # Estimate current time from progress
         current_time = (progress / 100.0) * self.sim_config.duration
         self.simulation_state.current_time = current_time
+        self.stats_panel.set_progress(current_time, self.sim_config.duration)
     
     def _show_ns3_config_dialog(self):
         """Show dialog to configure ns-3 path."""
@@ -872,30 +924,50 @@ class MainWindow(QMainWindow):
         if not filepath:
             return
         
-        # Clear current topology
-        self.canvas.topology_scene.clear_topology()
-        
-        # Load the file
-        loaded_network = self.project_manager.load(Path(filepath))
-        
-        if loaded_network is None:
+        try:
+            # Clear current topology
+            self.canvas.topology_scene.clear_topology()
+            
+            # Load the file
+            loaded_network = self.project_manager.load(Path(filepath))
+            
+            if loaded_network is None:
+                raise ValueError("Failed to parse topology file")
+            
+            # Replace network model and rebuild canvas
+            self.network_model = loaded_network
+            self.property_panel.set_network_model(self.network_model)
+            
+            # Recreate visual items from loaded model
+            self._rebuild_canvas_from_model()
+            
+            self._update_window_title()
+            self._update_counts()
+            
+            # Log success info
+            node_count = len(self.network_model.nodes)
+            link_count = len(self.network_model.links)
+            flow_count = len(self.network_model.saved_flows)
+            
+            msg = f"Opened {Path(filepath).name}: {node_count} nodes, {link_count} links"
+            if flow_count > 0:
+                msg += f", {flow_count} saved flows"
+            
+            self.statusBar().showMessage(msg, 3000)
+            
+        except Exception as e:
+            error_msg = str(e)
             QMessageBox.critical(
                 self,
-                "Error",
-                f"Failed to load topology from:\n{filepath}"
+                "Error Opening File",
+                f"Failed to load topology from:\n{filepath}\n\nError: {error_msg}"
             )
-            return
-        
-        # Replace network model and rebuild canvas
-        self.network_model = loaded_network
-        self.property_panel.set_network_model(self.network_model)
-        
-        # Recreate visual items from loaded model
-        self._rebuild_canvas_from_model()
-        
-        self._update_window_title()
-        self._update_counts()
-        self.statusBar().showMessage(f"Opened {Path(filepath).name}", 2000)
+            # Reset to empty state
+            self.network_model = NetworkModel()
+            self.property_panel.set_network_model(self.network_model)
+            self.canvas.topology_scene.network_model = self.network_model
+            self._update_counts()
+            self._update_window_title()
     
     def _rebuild_canvas_from_model(self):
         """Rebuild canvas graphics items from the network model."""
@@ -961,14 +1033,28 @@ class MainWindow(QMainWindow):
     
     def _save_to_file(self, filepath: Path):
         """Save network model to the specified file."""
-        if self.project_manager.save(self.network_model, filepath):
-            self._update_window_title()
-            self.statusBar().showMessage(f"Saved to {filepath.name}", 2000)
-        else:
+        try:
+            if self.project_manager.save(self.network_model, filepath):
+                self._update_window_title()
+                
+                # Build detailed status message
+                node_count = len(self.network_model.nodes)
+                link_count = len(self.network_model.links)
+                flow_count = len(self.network_model.saved_flows)
+                
+                msg = f"Saved to {filepath.name}: {node_count} nodes, {link_count} links"
+                if flow_count > 0:
+                    msg += f", {flow_count} flows"
+                
+                self.statusBar().showMessage(msg, 3000)
+            else:
+                raise IOError("Save operation returned failure")
+        except Exception as e:
+            error_msg = str(e)
             QMessageBox.critical(
                 self,
-                "Error",
-                f"Failed to save topology to:\n{filepath}"
+                "Error Saving File",
+                f"Failed to save topology to:\n{filepath}\n\nError: {error_msg}"
             )
     
     def _on_export_mininet(self):
