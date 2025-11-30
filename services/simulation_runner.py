@@ -47,17 +47,85 @@ def windows_to_wsl_path(win_path: str) -> str:
     return path
 
 
-def wsl_to_windows_path(wsl_path: str) -> str:
+def wsl_to_windows_path(wsl_path: str, distro: str = "Ubuntu") -> str:
     """
     Convert WSL path to Windows path.
     
     /mnt/c/Users/Name/folder -> C:\\Users\\Name\\folder
+    /home/user/folder -> \\\\wsl$\\Ubuntu\\home\\user\\folder
+    
+    Args:
+        wsl_path: Linux path in WSL
+        distro: WSL distribution name (default: Ubuntu)
+    
+    Returns:
+        Windows-accessible path
     """
+    if not wsl_path:
+        return wsl_path
+        
+    # Handle /mnt/X/ paths (Windows drives mounted in WSL)
     if wsl_path.startswith('/mnt/') and len(wsl_path) > 6:
         drive = wsl_path[5].upper()
         rest = wsl_path[6:].replace('/', '\\')
         return f"{drive}:{rest}"
+    
+    # Handle Linux paths (convert to \\wsl$\ UNC path)
+    if wsl_path.startswith('/'):
+        # Expand ~ if present
+        if wsl_path.startswith('~'):
+            # Can't expand ~ without knowing the username, return as-is
+            return wsl_path
+        
+        # Convert to UNC path: \\wsl$\<distro>\path
+        win_path = wsl_path.replace('/', '\\')
+        return f"\\\\wsl$\\{distro}{win_path}"
+    
     return wsl_path
+
+
+def wsl_unc_path_to_linux(unc_path: str) -> str:
+    """
+    Convert Windows UNC path (\\\\wsl$\\...) back to Linux path.
+    
+    \\\\wsl$\\Ubuntu\\home\\user\\folder -> /home/user/folder
+    //wsl$/Ubuntu/home/user/folder -> /home/user/folder
+    
+    Args:
+        unc_path: Windows UNC path to WSL filesystem
+        
+    Returns:
+        Linux path
+    """
+    if not unc_path:
+        return unc_path
+    
+    # Normalize to forward slashes first for easier processing
+    normalized = unc_path.replace('\\', '/')
+    
+    # Handle //wsl$/distro/path or //wsl.localhost/distro/path
+    prefixes = ['//wsl$/', '//wsl.localhost/']
+    
+    for prefix in prefixes:
+        if normalized.lower().startswith(prefix.lower()):
+            # Remove prefix
+            remainder = normalized[len(prefix):]
+            # Find end of distro name (first /)
+            sep_idx = remainder.find('/')
+            
+            if sep_idx > 0:
+                linux_path = remainder[sep_idx:]
+                return linux_path
+            else:
+                return '/'
+    
+    # Handle regular Windows paths (C:/... or C:\... -> /mnt/c/...)
+    if len(normalized) >= 2 and normalized[1] == ':':
+        drive = normalized[0].lower()
+        rest = normalized[2:]
+        return f"/mnt/{drive}{rest}"
+    
+    return unc_path
 
 
 class NS3Detector:

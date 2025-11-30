@@ -163,6 +163,12 @@ class MainWindow(QMainWindow):
         # Settings manager (JSON file based)
         self.settings_manager = get_settings()
         
+        # Ensure workspace directories exist
+        try:
+            self.settings_manager.ensure_workspace()
+        except Exception as e:
+            print(f"Warning: Could not create workspace directories: {e}")
+        
         # Models
         self.network_model = NetworkModel()
         self.simulation_state = SimulationState()
@@ -277,6 +283,19 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._on_open_file)
         file_menu.addAction(open_action)
+        
+        # Import submenu
+        import_menu = file_menu.addMenu("&Import")
+        
+        import_ns3_action = QAction("ns-3 Python Example...", self)
+        import_ns3_action.setStatusTip("Import topology from an ns-3 Python example script")
+        import_ns3_action.triggered.connect(self._on_import_ns3_example)
+        import_menu.addAction(import_ns3_action)
+        
+        import_ns3_batch_action = QAction("Batch Import ns-3 Examples...", self)
+        import_ns3_batch_action.setStatusTip("Import all Python examples from ns-3")
+        import_ns3_batch_action.triggered.connect(self._on_import_ns3_batch)
+        import_menu.addAction(import_ns3_batch_action)
         
         save_action = QAction("&Save", self)
         save_action.setShortcut(QKeySequence.StandardKey.Save)
@@ -914,15 +933,21 @@ class MainWindow(QMainWindow):
     
     def _on_open_file(self):
         """Open a topology file."""
+        # Get default directory from settings
+        default_dir = self.settings_manager.get_open_directory()
+        
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Topology",
-            "",
+            default_dir,
             "NS-3 GUI Topology (*.json);;All Files (*)"
         )
         
         if not filepath:
             return
+        
+        # Remember the directory for next time
+        self.settings_manager.set_open_directory(filepath)
         
         try:
             # Clear current topology
@@ -1018,14 +1043,21 @@ class MainWindow(QMainWindow):
     
     def _on_save_file_as(self):
         """Save topology to a new file."""
+        # Get default directory from settings
+        default_dir = self.settings_manager.get_save_directory()
+        default_path = os.path.join(default_dir, "topology.json") if default_dir else "topology.json"
+        
         filepath, _ = QFileDialog.getSaveFileName(
             self,
             "Save Topology",
-            "topology.json",
+            default_path,
             "NS-3 GUI Topology (*.json);;All Files (*)"
         )
         
         if filepath:
+            # Remember the directory for next time
+            self.settings_manager.set_save_directory(filepath)
+            
             # Ensure .json extension
             if not filepath.endswith('.json'):
                 filepath += '.json'
@@ -1087,6 +1119,65 @@ class MainWindow(QMainWindow):
                 self,
                 "Error",
                 f"Failed to export Mininet script:\n{e}"
+            )
+    
+    def _on_import_ns3_example(self):
+        """Import topology from an ns-3 Python example script."""
+        from views.ns3_import_dialog import NS3ImportDialog
+        
+        dialog = NS3ImportDialog(self.settings_manager, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            result = dialog.get_result()
+            if result and result.get("success"):
+                # Load the converted topology
+                topology_path = result.get("topology_path")
+                if topology_path and os.path.exists(topology_path):
+                    self._load_topology_file(Path(topology_path))
+                    self.statusBar().showMessage(
+                        f"Imported {result.get('node_count', 0)} nodes, "
+                        f"{result.get('link_count', 0)} links from ns-3 example",
+                        5000
+                    )
+    
+    def _on_import_ns3_batch(self):
+        """Batch import all ns-3 Python examples."""
+        from views.ns3_import_dialog import NS3BatchImportDialog
+        
+        dialog = NS3BatchImportDialog(self.settings_manager, self)
+        dialog.exec()
+    
+    def _load_topology_file(self, filepath: Path):
+        """Load a topology file into the canvas."""
+        try:
+            # Clear current topology
+            self.canvas.topology_scene.clear_topology()
+            
+            # Load the file
+            loaded_network = self.project_manager.load(filepath)
+            
+            if loaded_network is None:
+                raise ValueError("Failed to parse topology file")
+            
+            # Replace network model and rebuild canvas
+            self.network_model = loaded_network
+            self.property_panel.set_network_model(self.network_model)
+            
+            # Rebuild canvas with loaded nodes and links
+            self._rebuild_canvas_from_model()
+            
+            # Update recent files
+            self.settings_manager.add_recent_file(str(filepath))
+            
+            # Update state
+            self.project_manager._current_file = filepath
+            self._update_counts()
+            self._update_window_title()
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error Loading Topology",
+                f"Failed to load topology:\n{e}"
             )
     
     def _on_delete_selected(self):

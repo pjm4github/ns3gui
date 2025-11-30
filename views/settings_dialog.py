@@ -40,13 +40,14 @@ class SettingsDialog(QDialog):
     def _setup_ui(self):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(550)
-        self.setMinimumHeight(450)
+        self.setMinimumHeight(500)
         
         layout = QVBoxLayout(self)
         
         # Tab widget
         self._tabs = QTabWidget()
         self._tabs.addTab(self._create_ns3_tab(), "ns-3")
+        self._tabs.addTab(self._create_workspace_tab(), "Workspace")
         self._tabs.addTab(self._create_simulation_tab(), "Simulation")
         self._tabs.addTab(self._create_ui_tab(), "Interface")
         layout.addWidget(self._tabs)
@@ -208,6 +209,173 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return widget
     
+    def _create_workspace_tab(self) -> QWidget:
+        """Create workspace configuration tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Workspace profile group
+        profile_group = QGroupBox("Workspace Profile")
+        profile_layout = QFormLayout(profile_group)
+        
+        self._profile_combo = QComboBox()
+        self._profile_combo.addItems(["default", "test", "custom"])
+        self._profile_combo.currentTextChanged.connect(self._on_profile_changed)
+        profile_layout.addRow("Active Profile:", self._profile_combo)
+        
+        layout.addWidget(profile_group)
+        
+        # Workspace directory group
+        dir_group = QGroupBox("Workspace Directory")
+        dir_layout = QFormLayout(dir_group)
+        
+        # Workspace root path
+        root_layout = QHBoxLayout()
+        self._workspace_path_edit = QLineEdit()
+        self._workspace_path_edit.setPlaceholderText("Leave empty for default location")
+        root_layout.addWidget(self._workspace_path_edit)
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(self._browse_workspace_path)
+        root_layout.addWidget(browse_btn)
+        
+        dir_layout.addRow("Root Path:", root_layout)
+        
+        # Show current effective path
+        self._effective_path_label = QLabel()
+        self._effective_path_label.setStyleSheet("color: #6B7280; font-size: 11px;")
+        self._effective_path_label.setWordWrap(True)
+        dir_layout.addRow("", self._effective_path_label)
+        
+        layout.addWidget(dir_group)
+        
+        # Subdirectories info
+        subdir_group = QGroupBox("Subdirectories")
+        subdir_layout = QFormLayout(subdir_group)
+        
+        # Read-only display of subdirectory names
+        self._topo_subdir_label = QLabel()
+        subdir_layout.addRow("Topologies:", self._topo_subdir_label)
+        
+        self._scripts_subdir_label = QLabel()
+        subdir_layout.addRow("Scripts:", self._scripts_subdir_label)
+        
+        self._results_subdir_label = QLabel()
+        subdir_layout.addRow("Results:", self._results_subdir_label)
+        
+        self._templates_subdir_label = QLabel()
+        subdir_layout.addRow("Templates:", self._templates_subdir_label)
+        
+        layout.addWidget(subdir_group)
+        
+        # Actions
+        actions_layout = QHBoxLayout()
+        
+        open_workspace_btn = QPushButton("Open Workspace Folder")
+        open_workspace_btn.clicked.connect(self._open_workspace_folder)
+        actions_layout.addWidget(open_workspace_btn)
+        
+        create_dirs_btn = QPushButton("Create Directories")
+        create_dirs_btn.clicked.connect(self._create_workspace_dirs)
+        actions_layout.addWidget(create_dirs_btn)
+        
+        actions_layout.addStretch()
+        layout.addLayout(actions_layout)
+        
+        layout.addStretch()
+        return widget
+    
+    def _on_profile_changed(self, profile: str):
+        """Handle workspace profile change."""
+        # Update the workspace path edit with stored path for this profile
+        workspaces = self._settings.settings.paths.workspaces
+        path = workspaces.get(profile, "")
+        self._workspace_path_edit.setText(path)
+        self._update_effective_path()
+    
+    def _update_effective_path(self):
+        """Update the effective path display."""
+        profile = self._profile_combo.currentText()
+        custom_path = self._workspace_path_edit.text().strip()
+        
+        # Calculate effective path
+        if custom_path:
+            from pathlib import Path
+            effective = Path(custom_path)
+        else:
+            effective = self._settings.paths._get_default_workspace()
+        
+        self._effective_path_label.setText(f"Effective path: {effective}")
+        
+        # Update subdirectory labels
+        paths = self._settings.paths
+        self._topo_subdir_label.setText(f"{effective / paths.topologies_subdir}")
+        self._scripts_subdir_label.setText(f"{effective / paths.scripts_subdir}")
+        self._results_subdir_label.setText(f"{effective / paths.results_subdir}")
+        self._templates_subdir_label.setText(f"{effective / paths.templates_subdir}")
+    
+    def _browse_workspace_path(self):
+        """Browse for workspace directory."""
+        current = self._workspace_path_edit.text() or str(self._settings.paths.get_workspace_root())
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Workspace Directory", current
+        )
+        if path:
+            self._workspace_path_edit.setText(path)
+            self._update_effective_path()
+    
+    def _open_workspace_folder(self):
+        """Open workspace folder in file explorer."""
+        import subprocess
+        import platform
+        
+        folder = str(self._settings.paths.get_workspace_root())
+        
+        if not os.path.exists(folder):
+            QMessageBox.warning(
+                self, "Folder Not Found",
+                f"Workspace folder does not exist:\n{folder}\n\n"
+                "Click 'Create Directories' to create it."
+            )
+            return
+        
+        if platform.system() == "Windows":
+            os.startfile(folder)
+        elif platform.system() == "Darwin":
+            subprocess.run(["open", folder])
+        else:
+            subprocess.run(["xdg-open", folder])
+    
+    def _create_workspace_dirs(self):
+        """Create workspace directories."""
+        try:
+            # Temporarily update settings to use current form values
+            profile = self._profile_combo.currentText()
+            custom_path = self._workspace_path_edit.text().strip()
+            
+            if custom_path:
+                self._settings.paths.workspaces[profile] = custom_path
+            
+            old_profile = self._settings.paths.active_profile
+            self._settings.paths.active_profile = profile
+            
+            self._settings.paths.ensure_workspace_dirs()
+            
+            # Restore
+            self._settings.paths.active_profile = old_profile
+            
+            QMessageBox.information(
+                self, "Success",
+                "Workspace directories created successfully."
+            )
+            self._update_effective_path()
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error",
+                f"Failed to create directories:\n{e}"
+            )
+    
     def _create_ui_tab(self) -> QWidget:
         """Create UI settings tab."""
         widget = QWidget()
@@ -272,6 +440,17 @@ class SettingsDialog(QDialog):
             else:
                 self._wsl_distro_combo.setCurrentText(s.ns3.wsl_distribution)
         
+        # Workspace tab
+        idx = self._profile_combo.findText(s.paths.active_profile)
+        if idx >= 0:
+            self._profile_combo.setCurrentIndex(idx)
+        else:
+            self._profile_combo.setCurrentText(s.paths.active_profile)
+        
+        workspace_path = s.paths.workspaces.get(s.paths.active_profile, "")
+        self._workspace_path_edit.setText(workspace_path)
+        self._update_effective_path()
+        
         # Simulation tab
         self._duration_spin.setValue(s.simulation.duration)
         self._seed_spin.setValue(s.simulation.random_seed)
@@ -299,6 +478,17 @@ class SettingsDialog(QDialog):
         if is_windows():
             s.ns3.use_wsl = self._use_wsl_check.isChecked()
             s.ns3.wsl_distribution = self._wsl_distro_combo.currentText()
+        
+        # Workspace tab
+        profile = self._profile_combo.currentText()
+        workspace_path = self._workspace_path_edit.text().strip()
+        
+        s.paths.active_profile = profile
+        if workspace_path:
+            s.paths.workspaces[profile] = workspace_path
+        elif profile in s.paths.workspaces:
+            # Clear custom path if empty (use default)
+            del s.paths.workspaces[profile]
         
         # Simulation tab
         s.simulation.duration = self._duration_spin.value()

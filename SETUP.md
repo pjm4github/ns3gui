@@ -328,6 +328,82 @@ The GUI saves settings (including ns-3 path) to a JSON file:
 
 To reset settings, delete this file.
 
+## Workspace Configuration
+
+The GUI uses a workspace directory structure to organize topology files, generated scripts, and simulation results.
+
+### Default Workspace Location
+
+| Platform | Default Path |
+|----------|-------------|
+| **Windows** | `Documents\NS3GUI\` |
+| **Linux** | `~/ns3gui/` |
+| **macOS** | `~/Documents/NS3GUI/` |
+
+### Workspace Structure
+
+```
+NS3GUI/                     # Workspace root
+├── topologies/             # Saved topology files (.json)
+├── scripts/                # Generated ns-3 Python scripts
+├── results/                # Simulation output files
+└── templates/              # Topology templates
+```
+
+### Configuring the Workspace
+
+1. Go to **Edit → Settings** (or press Ctrl+,)
+2. Select the **Workspace** tab
+3. Choose a workspace profile:
+   - **default**: Normal user workspace
+   - **test**: For automated testing
+   - **custom**: User-defined workspace
+4. Optionally set a custom root path
+5. Click **Create Directories** to ensure folders exist
+6. Click **OK** to save
+
+### Workspace Profiles
+
+Workspace profiles allow different configurations for different use cases:
+
+| Profile | Use Case |
+|---------|----------|
+| **default** | Normal day-to-day usage |
+| **test** | Automated testing with isolated test data |
+| **custom** | User-defined workspace for specific projects |
+
+Each profile can have its own root directory. If no custom path is set, the default platform-specific location is used.
+
+### Test Configuration
+
+For automated testing, configure the test workspace:
+
+1. Set active profile to "test"
+2. Set a path like `C:\NS3GUI_Tests` or `/tmp/ns3gui_tests`
+3. Tests will read/write files from this isolated location
+
+### Programmatic Access
+
+For scripts and automation:
+
+```python
+from services.settings_manager import get_settings
+
+# Get settings manager
+settings = get_settings()
+
+# Get workspace directories
+topo_dir = settings.get_topologies_dir()
+scripts_dir = settings.get_scripts_dir()
+results_dir = settings.get_results_dir()
+
+# Switch profiles
+settings.set_workspace_profile("test")
+
+# Set custom workspace path
+settings.set_workspace_path("test", "/tmp/ns3gui_tests")
+```
+
 ## File Locations
 
 | Item | Location |
@@ -342,18 +418,18 @@ To reset settings, delete this file.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Windows                                 │
+│                      Windows                                │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                  PyQt6 GUI                             │  │
-│  │  • Topology editor                                     │  │
+│  │                  PyQt6 GUI                            │  │
+│  │  • Topology editor                                    │  │
 │  │  • Generate ns-3 Python script                        │  │
-│  │  • Display results                                     │  │
+│  │  • Display results                                    │  │
 │  └───────────────────────────────────────────────────────┘  │
-│                            │                                 │
+│                            │                                │
 │                    wsl -e bash -c "..."                     │
-│                            ▼                                 │
+│                            ▼                                │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                  WSL2 (Ubuntu)                         │  │
+│  │                  WSL2 (Ubuntu)                        │  │
 │  │  • ns-3 simulator with Python bindings (cppyy)        │  │
 │  │  • Execute: ./ns3 run scratch/gui_simulation.py       │  │
 │  │  • Output via stdout back to GUI                      │  │

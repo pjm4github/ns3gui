@@ -436,6 +436,11 @@ class NetworkModel:
     # Saved traffic flows (referenced by node IDs)
     saved_flows: list = field(default_factory=list)  # List of TrafficFlow-like dicts
     
+    # Import metadata and tracking
+    import_metadata: dict = field(default_factory=dict)  # Source file info, etc.
+    todos: list = field(default_factory=list)  # Unhandled patterns from import
+    warnings: list = field(default_factory=list)  # Non-critical issues
+    
     # Auto IP assignment tracking
     _next_subnet: int = field(default=1, repr=False)
     

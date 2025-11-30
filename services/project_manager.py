@@ -132,7 +132,8 @@ class ProjectManager:
             "metadata": {
                 "created": datetime.now().isoformat(),
                 "generator": "ns3-gui-mvp",
-                "description": ""
+                "description": "",
+                "import_info": network.import_metadata if network.import_metadata else {}
             },
             "simulation": {
                 "duration": network.simulation_duration,
@@ -151,7 +152,9 @@ class ProjectManager:
                     self._serialize_link(link, network)
                     for link in network.links.values()
                 ]
-            }
+            },
+            "todos": network.todos if network.todos else [],
+            "warnings": network.warnings if network.warnings else []
         }
     
     def _serialize_flow(self, flow) -> dict:
@@ -304,6 +307,14 @@ class ProjectManager:
                 flow = self._deserialize_flow(flow_data)
                 if flow:
                     network.saved_flows.append(flow)
+        
+        # Load import metadata
+        if "metadata" in data:
+            network.import_metadata = data["metadata"].get("import_info", {})
+        
+        # Load todos and warnings
+        network.todos = data.get("todos", [])
+        network.warnings = data.get("warnings", [])
         
         # Load topology
         topology = data.get("topology", {})
