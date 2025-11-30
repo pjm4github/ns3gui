@@ -38,6 +38,10 @@ COLORS = {
     "port_disabled": QColor("#EF4444"),    # Red
     "port_selected": QColor("#F59E0B"),    # Orange/Yellow
     "port_hover": QColor("#60A5FA"),       # Light blue
+    # Route visualization colors
+    "route_path": QColor("#22C55E"),       # Green for route paths
+    "route_default": QColor("#3B82F6"),    # Blue for default routes
+    "route_highlight": QColor("#F59E0B"),  # Orange for highlighted routes
 }
 
 
@@ -209,8 +213,13 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
     def _create_port_indicators(self):
         """Create visual indicators for each port."""
         # Clear existing port items
-        for port_item in self._port_items.values():
-            self.scene().removeItem(port_item) if self.scene() else None
+        scene = self.scene()
+        for port_item in list(self._port_items.values()):
+            if scene:
+                try:
+                    scene.removeItem(port_item)
+                except (RuntimeError, AttributeError):
+                    pass  # Item already removed
         self._port_items.clear()
         
         num_ports = len(self.node_model.ports)
@@ -335,22 +344,37 @@ class LinkGraphicsItem(QGraphicsPathItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
         
+        # State - must be initialized before _setup_appearance
+        self._is_hovered = False
+        self._route_highlighted = False
+        self._is_default_route = False
+        
         # Visual setup
         self._setup_appearance()
         self._update_path()
-        
-        # State
-        self._is_hovered = False
     
     def _setup_appearance(self):
         """Set up colors and pen."""
-        if self.link_model.channel_type == ChannelType.POINT_TO_POINT:
+        if self._route_highlighted:
+            # Route highlight appearance
+            color = COLORS["route_default"] if self._is_default_route else COLORS["route_path"]
+            self.setPen(QPen(color, 5, Qt.PenStyle.SolidLine, 
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        elif self.link_model.channel_type == ChannelType.POINT_TO_POINT:
             color = COLORS["link_p2p"]
+            self.setPen(QPen(color, 3, Qt.PenStyle.SolidLine, 
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         else:
             color = COLORS["link_csma"]
-        
-        self.setPen(QPen(color, 3, Qt.PenStyle.SolidLine, 
-                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            self.setPen(QPen(color, 3, Qt.PenStyle.SolidLine, 
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    
+    def set_route_highlight(self, highlighted: bool, is_default: bool = False):
+        """Set route highlighting state."""
+        self._route_highlighted = highlighted
+        self._is_default_route = is_default
+        self._setup_appearance()
+        self.update()
     
     def _update_path(self):
         """Update the path between source and target ports."""
@@ -396,10 +420,11 @@ class LinkGraphicsItem(QGraphicsPathItem):
     def hoverEnterEvent(self, event):
         """Handle hover enter."""
         self._is_hovered = True
-        pen = self.pen()
-        pen.setWidth(5)
-        pen.setColor(COLORS["hover"])
-        self.setPen(pen)
+        if not self._route_highlighted:
+            pen = self.pen()
+            pen.setWidth(5)
+            pen.setColor(COLORS["hover"])
+            self.setPen(pen)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         super().hoverEnterEvent(event)
     
@@ -746,23 +771,29 @@ class TopologyScene(QGraphicsScene):
     
     def add_link(self, link_model: LinkModel) -> Optional[LinkGraphicsItem]:
         """Add a link to the scene."""
-        source_item = self._node_items.get(link_model.source_node_id)
-        target_item = self._node_items.get(link_model.target_node_id)
-        
-        if not source_item or not target_item:
+        try:
+            source_item = self._node_items.get(link_model.source_node_id)
+            target_item = self._node_items.get(link_model.target_node_id)
+            
+            if not source_item or not target_item:
+                return None
+            
+            item = LinkGraphicsItem(link_model, source_item, target_item)
+            self.addItem(item)
+            item.setZValue(-1)  # Behind nodes
+            self._link_items[link_model.id] = item
+            
+            # Update port appearances
+            source_item.update_ports()
+            target_item.update_ports()
+            
+            self.linkAdded.emit(link_model)
+            return item
+        except Exception as e:
+            print(f"Error in TopologyScene.add_link: {e}")
+            import traceback
+            traceback.print_exc()
             return None
-        
-        item = LinkGraphicsItem(link_model, source_item, target_item)
-        self.addItem(item)
-        item.setZValue(-1)  # Behind nodes
-        self._link_items[link_model.id] = item
-        
-        # Update port appearances
-        source_item.update_ports()
-        target_item.update_ports()
-        
-        self.linkAdded.emit(link_model)
-        return item
     
     def remove_link(self, link_id: str):
         """Remove a link from the scene."""
@@ -832,66 +863,80 @@ class TopologyScene(QGraphicsScene):
     
     def finish_link_at_port(self, target_port: PortGraphicsItem) -> Optional[LinkModel]:
         """Finish creating a link at a target port."""
-        if not self._link_source_port or not self._temp_link:
-            return None
-        
-        source_port = self._link_source_port
-        
-        # Validate
-        if source_port == target_port:
+        try:
+            if not self._link_source_port or not self._temp_link:
+                return None
+            
+            source_port = self._link_source_port
+            
+            # Validate
+            if source_port == target_port:
+                self.cancel_link_creation()
+                return None
+            
+            if source_port.parent_node == target_port.parent_node:
+                self.cancel_link_creation()
+                return None
+            
+            if target_port.port.is_connected:
+                self.cancel_link_creation()
+                return None
+            
+            # Create link in model
+            source_node = source_port.parent_node.node_model
+            target_node = target_port.parent_node.node_model
+            
+            link = self.network_model.add_link(
+                source_node.id, 
+                target_node.id,
+                source_port_id=source_port.port.id,
+                target_port_id=target_port.port.id
+            )
+            
+            if link:
+                self.add_link(link)
+            
+            self.cancel_link_creation()
+            return link
+        except Exception as e:
+            print(f"Error in finish_link_at_port: {e}")
+            import traceback
+            traceback.print_exc()
             self.cancel_link_creation()
             return None
-        
-        if source_port.parent_node == target_port.parent_node:
-            self.cancel_link_creation()
-            return None
-        
-        if target_port.port.is_connected:
-            self.cancel_link_creation()
-            return None
-        
-        # Create link in model
-        source_node = source_port.parent_node.node_model
-        target_node = target_port.parent_node.node_model
-        
-        link = self.network_model.add_link(
-            source_node.id, 
-            target_node.id,
-            source_port_id=source_port.port.id,
-            target_port_id=target_port.port.id
-        )
-        
-        if link:
-            self.add_link(link)
-        
-        self.cancel_link_creation()
-        return link
     
     def finish_link_at_node(self, target_node: NodeGraphicsItem) -> Optional[LinkModel]:
         """Finish creating a link at a node (auto-select port)."""
-        if not self._link_source_port or not self._temp_link:
-            return None
-        
-        source_port = self._link_source_port
-        source_node = source_port.parent_node.node_model
-        target_node_model = target_node.node_model
-        
-        if source_node.id == target_node_model.id:
+        try:
+            if not self._link_source_port or not self._temp_link:
+                return None
+            
+            source_port = self._link_source_port
+            source_node = source_port.parent_node.node_model
+            target_node_model = target_node.node_model
+            
+            if source_node.id == target_node_model.id:
+                self.cancel_link_creation()
+                return None
+            
+            # Create link in model (will auto-select available port)
+            link = self.network_model.add_link(
+                source_node.id,
+                target_node_model.id,
+                source_port_id=source_port.port.id
+            )
+            
+            if link:
+                self.add_link(link)
+            
+            self.cancel_link_creation()
+            return link
+        except Exception as e:
+            print(f"Error in finish_link_at_node: {e}")
+            import traceback
+            traceback.print_exc()
             self.cancel_link_creation()
             return None
-        
-        # Create link in model (will auto-select available port)
-        link = self.network_model.add_link(
-            source_node.id,
-            target_node_model.id,
-            source_port_id=source_port.port.id
-        )
-        
-        if link:
-            self.add_link(link)
-        
-        self.cancel_link_creation()
-        return link
     
     def cancel_link_creation(self):
         """Cancel the current link creation."""
@@ -935,6 +980,176 @@ class TopologyScene(QGraphicsScene):
         for node_id in list(self._node_items.keys()):
             self.remove_node(node_id)
         self.network_model.clear()
+    
+    # Route visualization
+    def show_routes_from_node(self, node_id: str):
+        """Highlight all routes from a specific node."""
+        self.clear_route_highlights()
+        
+        node = self.network_model.get_node(node_id)
+        if not node:
+            return
+        
+        # Switches don't have routing tables
+        if node.node_type == NodeType.SWITCH:
+            return
+        
+        from models import RoutingMode
+        
+        # Highlight outgoing routes
+        for route in node.routing_table:
+            if not route.enabled:
+                continue
+            
+            # Find links that would carry traffic for this route
+            path_links = self._find_path_for_route(node_id, route)
+            for link_id in path_links:
+                if link_id in self._link_items:
+                    self._link_items[link_id].set_route_highlight(True, route.is_default_route)
+    
+    def show_routes_to_node(self, target_node_id: str):
+        """Highlight routes from all nodes that can reach this node."""
+        self.clear_route_highlights()
+        
+        target_node = self.network_model.get_node(target_node_id)
+        if not target_node:
+            return
+        
+        # Find all hosts that have routes to this node's networks
+        for node_id, node in self.network_model.nodes.items():
+            if node_id == target_node_id:
+                continue
+            
+            # Check if this node can reach the target
+            path_links = self._find_path_between_nodes(node_id, target_node_id)
+            for link_id in path_links:
+                if link_id in self._link_items:
+                    self._link_items[link_id].set_route_highlight(True, False)
+    
+    def show_all_routes(self):
+        """Show all configured routes in the network."""
+        self.clear_route_highlights()
+        
+        from models import RoutingMode
+        
+        for node_id, node in self.network_model.nodes.items():
+            # Skip switches - they don't have routing tables
+            if node.node_type == NodeType.SWITCH:
+                continue
+            
+            if node.routing_mode != RoutingMode.MANUAL:
+                continue
+            
+            for route in node.routing_table:
+                if not route.enabled:
+                    continue
+                
+                path_links = self._find_path_for_route(node_id, route)
+                for link_id in path_links:
+                    if link_id in self._link_items:
+                        self._link_items[link_id].set_route_highlight(True, route.is_default_route)
+    
+    def clear_route_highlights(self):
+        """Clear all route highlighting."""
+        for link_item in self._link_items.values():
+            link_item.set_route_highlight(False, False)
+    
+    def _find_path_for_route(self, source_node_id: str, route) -> list:
+        """Find link IDs that would be used for a route."""
+        path_links = []
+        
+        # For direct routes, find the link on the specified interface
+        if route.is_direct:
+            # Find link connected to this interface
+            interface_idx = route.interface
+            current_iface = 0
+            
+            for link_id, link in self.network_model.links.items():
+                if link.source_node_id == source_node_id:
+                    if current_iface == interface_idx:
+                        path_links.append(link_id)
+                        break
+                    current_iface += 1
+                elif link.target_node_id == source_node_id:
+                    if current_iface == interface_idx:
+                        path_links.append(link_id)
+                        break
+                    current_iface += 1
+        else:
+            # For gateway routes, find link to gateway
+            gateway = route.gateway
+            
+            # Find the link that connects to the gateway
+            for link_id, link in self.network_model.links.items():
+                # Check link endpoints to see if gateway is reachable
+                link_idx = list(self.network_model.links.keys()).index(link_id)
+                source_ip = f"10.1.{link_idx + 1}.1"
+                target_ip = f"10.1.{link_idx + 1}.2"
+                
+                if link.source_node_id == source_node_id and target_ip == gateway:
+                    path_links.append(link_id)
+                    break
+                elif link.target_node_id == source_node_id and source_ip == gateway:
+                    path_links.append(link_id)
+                    break
+        
+        return path_links
+    
+    def _find_path_between_nodes(self, source_id: str, target_id: str) -> list:
+        """Find links on the path between two nodes (simple BFS)."""
+        from collections import deque
+        
+        if source_id == target_id:
+            return []
+        
+        # Build adjacency list
+        adjacency = {}
+        for node_id in self.network_model.nodes:
+            adjacency[node_id] = []
+        
+        for link_id, link in self.network_model.links.items():
+            adjacency[link.source_node_id].append((link.target_node_id, link_id))
+            adjacency[link.target_node_id].append((link.source_node_id, link_id))
+        
+        # BFS to find path
+        visited = {source_id}
+        queue = deque([(source_id, [])])
+        
+        while queue:
+            current, path = queue.popleft()
+            
+            for neighbor, link_id in adjacency.get(current, []):
+                if neighbor == target_id:
+                    return path + [link_id]
+                
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [link_id]))
+        
+        return []
+
+
+class RouteOverlayItem(QGraphicsPathItem):
+    """Overlay item for showing route paths."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._is_default = False
+        self._setup_appearance()
+    
+    def _setup_appearance(self):
+        color = COLORS["route_path"]
+        pen = QPen(color, 4, Qt.PenStyle.DashLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        self.setPen(pen)
+        self.setZValue(-0.5)  # Between links and nodes
+    
+    def set_is_default_route(self, is_default: bool):
+        self._is_default = is_default
+        color = COLORS["route_default"] if is_default else COLORS["route_path"]
+        pen = self.pen()
+        pen.setColor(color)
+        self.setPen(pen)
 
 
 class TopologyCanvas(QGraphicsView):

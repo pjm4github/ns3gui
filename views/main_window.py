@@ -337,6 +337,30 @@ class MainWindow(QMainWindow):
         reset_view_action.triggered.connect(self._on_reset_view)
         view_menu.addAction(reset_view_action)
         
+        view_menu.addSeparator()
+        
+        # Route visualization submenu
+        route_menu = view_menu.addMenu("&Routes")
+        
+        self._show_routes_action = QAction("Show &All Routes", self)
+        self._show_routes_action.setCheckable(True)
+        self._show_routes_action.setShortcut("Ctrl+Shift+R")
+        self._show_routes_action.triggered.connect(self._on_toggle_show_routes)
+        route_menu.addAction(self._show_routes_action)
+        
+        show_routes_from_action = QAction("Show Routes &From Selected Node", self)
+        show_routes_from_action.triggered.connect(self._on_show_routes_from_selected)
+        route_menu.addAction(show_routes_from_action)
+        
+        show_routes_to_action = QAction("Show Routes &To Selected Node", self)
+        show_routes_to_action.triggered.connect(self._on_show_routes_to_selected)
+        route_menu.addAction(show_routes_to_action)
+        
+        clear_routes_action = QAction("&Clear Route Highlights", self)
+        clear_routes_action.setShortcut("Escape")
+        clear_routes_action.triggered.connect(self._on_clear_route_highlights)
+        route_menu.addAction(clear_routes_action)
+        
         # Simulation menu
         sim_menu = menubar.addMenu("&Simulation")
         
@@ -875,28 +899,43 @@ class MainWindow(QMainWindow):
     
     def _rebuild_canvas_from_model(self):
         """Rebuild canvas graphics items from the network model."""
-        scene = self.canvas.topology_scene
-        scene.network_model = self.network_model
-        
-        # Create node graphics items
-        from PyQt6.QtCore import QPointF
-        from views.topology_canvas import NodeGraphicsItem, LinkGraphicsItem
-        
-        for node in self.network_model.nodes.values():
-            item = NodeGraphicsItem(node)
-            scene.addItem(item)
-            scene._node_items[node.id] = item
-        
-        # Create link graphics items
-        for link in self.network_model.links.values():
-            source_item = scene._node_items.get(link.source_node_id)
-            target_item = scene._node_items.get(link.target_node_id)
+        try:
+            scene = self.canvas.topology_scene
+            scene.network_model = self.network_model
             
-            if source_item and target_item:
-                link_item = LinkGraphicsItem(link, source_item, target_item)
-                scene.addItem(link_item)
-                link_item.setZValue(-1)
-                scene._link_items[link.id] = link_item
+            # Create node graphics items
+            from PyQt6.QtCore import QPointF
+            from views.topology_canvas import NodeGraphicsItem, LinkGraphicsItem
+            
+            for node in self.network_model.nodes.values():
+                item = NodeGraphicsItem(node)
+                scene.addItem(item)
+                scene._node_items[node.id] = item
+            
+            # Create link graphics items
+            for link in self.network_model.links.values():
+                source_item = scene._node_items.get(link.source_node_id)
+                target_item = scene._node_items.get(link.target_node_id)
+                
+                if source_item and target_item:
+                    link_item = LinkGraphicsItem(link, source_item, target_item)
+                    scene.addItem(link_item)
+                    link_item.setZValue(-1)
+                    scene._link_items[link.id] = link_item
+            
+            # Update port appearances after all links are created
+            for node_item in scene._node_items.values():
+                node_item.update_ports()
+                
+        except Exception as e:
+            print(f"Error in _rebuild_canvas_from_model: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(
+                self,
+                "Warning",
+                f"Error rebuilding canvas: {str(e)}"
+            )
     
     def _on_save_file(self):
         """Save to current file or prompt for new file."""
@@ -982,6 +1021,69 @@ class MainWindow(QMainWindow):
     def _on_reset_view(self):
         """Reset view to default."""
         self.canvas.reset_view()
+    
+    def _on_toggle_show_routes(self, checked: bool):
+        """Toggle showing all routes."""
+        if checked:
+            self.canvas.topology_scene.show_all_routes()
+            self.statusBar().showMessage("Showing all configured routes", 3000)
+        else:
+            self.canvas.topology_scene.clear_route_highlights()
+            self.statusBar().showMessage("Route highlights cleared", 2000)
+    
+    def _on_show_routes_from_selected(self):
+        """Show routes originating from the selected node."""
+        selected = self.canvas.topology_scene.selectedItems()
+        
+        node_item = None
+        for item in selected:
+            if hasattr(item, 'node_model'):
+                node_item = item
+                break
+        
+        if not node_item:
+            QMessageBox.information(
+                self, 
+                "Show Routes", 
+                "Please select a node first."
+            )
+            return
+        
+        self.canvas.topology_scene.show_routes_from_node(node_item.node_model.id)
+        self._show_routes_action.setChecked(False)
+        self.statusBar().showMessage(
+            f"Showing routes from {node_item.node_model.name}", 3000
+        )
+    
+    def _on_show_routes_to_selected(self):
+        """Show routes to the selected node."""
+        selected = self.canvas.topology_scene.selectedItems()
+        
+        node_item = None
+        for item in selected:
+            if hasattr(item, 'node_model'):
+                node_item = item
+                break
+        
+        if not node_item:
+            QMessageBox.information(
+                self, 
+                "Show Routes", 
+                "Please select a node first."
+            )
+            return
+        
+        self.canvas.topology_scene.show_routes_to_node(node_item.node_model.id)
+        self._show_routes_action.setChecked(False)
+        self.statusBar().showMessage(
+            f"Showing routes to {node_item.node_model.name}", 3000
+        )
+    
+    def _on_clear_route_highlights(self):
+        """Clear all route highlighting."""
+        self.canvas.topology_scene.clear_route_highlights()
+        self._show_routes_action.setChecked(False)
+        self.statusBar().showMessage("Route highlights cleared", 2000)
     
     def _on_about(self):
         """Show about dialog."""
@@ -1163,6 +1265,37 @@ class SimulationConfigDialog(QDialog):
         self._network = network
         self._config = config
         self._setup_ui()
+        
+        # Auto-load saved flows if config is empty and there are saved flows
+        self._auto_load_saved_flows()
+    
+    def _auto_load_saved_flows(self):
+        """Automatically load saved flows if the config is empty."""
+        if not self._config.flows and self._network.saved_flows:
+            # Silently load saved flows
+            from models import TrafficFlow
+            for saved_flow in self._network.saved_flows:
+                # Validate that source and target nodes still exist
+                if (saved_flow.source_node_id in self._network.nodes and 
+                    saved_flow.target_node_id in self._network.nodes):
+                    # Create a copy with a new ID
+                    new_flow = TrafficFlow(
+                        name=saved_flow.name,
+                        source_node_id=saved_flow.source_node_id,
+                        target_node_id=saved_flow.target_node_id,
+                        protocol=saved_flow.protocol,
+                        application=saved_flow.application,
+                        start_time=saved_flow.start_time,
+                        stop_time=saved_flow.stop_time,
+                        data_rate=saved_flow.data_rate,
+                        packet_size=saved_flow.packet_size,
+                        echo_packets=saved_flow.echo_packets,
+                        echo_interval=saved_flow.echo_interval
+                    )
+                    self._config.flows.append(new_flow)
+            
+            # Update the flow list display
+            self._update_flow_list()
     
     def _setup_ui(self):
         self.setWindowTitle("Simulation Configuration")
