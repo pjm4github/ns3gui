@@ -1214,7 +1214,26 @@ class SimulationConfigDialog(QDialog):
         flow_btn_layout.addWidget(remove_flow_btn)
         
         flow_btn_layout.addStretch()
+        
+        # Load/Save buttons
+        load_flows_btn = QPushButton("Load Saved")
+        load_flows_btn.setToolTip("Load flows saved with the topology")
+        load_flows_btn.clicked.connect(self._load_saved_flows)
+        flow_btn_layout.addWidget(load_flows_btn)
+        
+        save_flows_btn = QPushButton("Save Flows")
+        save_flows_btn.setToolTip("Save current flows with the topology")
+        save_flows_btn.clicked.connect(self._save_flows)
+        flow_btn_layout.addWidget(save_flows_btn)
+        
         flows_layout.addLayout(flow_btn_layout)
+        
+        # Show saved flows count
+        saved_count = len(self._network.saved_flows)
+        if saved_count > 0:
+            saved_label = QLabel(f"({saved_count} flow(s) saved with topology)")
+            saved_label.setStyleSheet("color: #6B7280; font-size: 11px; font-style: italic;")
+            flows_layout.addWidget(saved_label)
         
         layout.addWidget(flows_group)
         
@@ -1298,6 +1317,124 @@ class SimulationConfigDialog(QDialog):
         flow_id = item.data(Qt.ItemDataRole.UserRole)
         self._config.remove_flow(flow_id)
         self._update_flow_list()
+    
+    def _load_saved_flows(self):
+        """Load flows that were saved with the topology."""
+        if not self._network.saved_flows:
+            QMessageBox.information(
+                self,
+                "No Saved Flows",
+                "No flows have been saved with this topology.\n\n"
+                "Use 'Save Flows' to save the current flows."
+            )
+            return
+        
+        # Ask user how to handle existing flows
+        if self._config.flows:
+            reply = QMessageBox.question(
+                self,
+                "Load Saved Flows",
+                f"Found {len(self._network.saved_flows)} saved flow(s).\n\n"
+                "Do you want to replace the current flows or add to them?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            elif reply == QMessageBox.StandardButton.Yes:
+                # Replace
+                self._config.flows.clear()
+        
+        # Load saved flows
+        loaded_count = 0
+        for saved_flow in self._network.saved_flows:
+            # Validate that source and target nodes still exist
+            if (saved_flow.source_node_id in self._network.nodes and 
+                saved_flow.target_node_id in self._network.nodes):
+                # Create a copy with a new ID to avoid conflicts
+                from models import TrafficFlow
+                new_flow = TrafficFlow(
+                    name=saved_flow.name,
+                    source_node_id=saved_flow.source_node_id,
+                    target_node_id=saved_flow.target_node_id,
+                    protocol=saved_flow.protocol,
+                    application=saved_flow.application,
+                    start_time=saved_flow.start_time,
+                    stop_time=saved_flow.stop_time,
+                    data_rate=saved_flow.data_rate,
+                    packet_size=saved_flow.packet_size,
+                    echo_packets=saved_flow.echo_packets,
+                    echo_interval=saved_flow.echo_interval
+                )
+                self._config.flows.append(new_flow)
+                loaded_count += 1
+        
+        self._update_flow_list()
+        
+        if loaded_count > 0:
+            QMessageBox.information(
+                self,
+                "Flows Loaded",
+                f"Loaded {loaded_count} flow(s) from saved topology."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "No Valid Flows",
+                "No valid flows could be loaded.\n"
+                "The referenced nodes may have been deleted."
+            )
+    
+    def _save_flows(self):
+        """Save current flows with the topology."""
+        if not self._config.flows:
+            QMessageBox.information(
+                self,
+                "No Flows",
+                "No flows to save. Add some flows first."
+            )
+            return
+        
+        # Confirm if there are already saved flows
+        if self._network.saved_flows:
+            reply = QMessageBox.question(
+                self,
+                "Save Flows",
+                f"This will replace {len(self._network.saved_flows)} previously saved flow(s) "
+                f"with {len(self._config.flows)} current flow(s).\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        
+        # Save flows to network model
+        self._network.saved_flows.clear()
+        for flow in self._config.flows:
+            # Store a copy
+            from models import TrafficFlow
+            saved_flow = TrafficFlow(
+                id=flow.id,
+                name=flow.name,
+                source_node_id=flow.source_node_id,
+                target_node_id=flow.target_node_id,
+                protocol=flow.protocol,
+                application=flow.application,
+                start_time=flow.start_time,
+                stop_time=flow.stop_time,
+                data_rate=flow.data_rate,
+                packet_size=flow.packet_size,
+                echo_packets=flow.echo_packets,
+                echo_interval=flow.echo_interval
+            )
+            self._network.saved_flows.append(saved_flow)
+        
+        QMessageBox.information(
+            self,
+            "Flows Saved",
+            f"Saved {len(self._config.flows)} flow(s) with the topology.\n\n"
+            "Remember to save the project file (Ctrl+S) to persist."
+        )
     
     def get_config(self) -> SimulationConfig:
         """Get the updated configuration."""

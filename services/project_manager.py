@@ -104,7 +104,11 @@ class ProjectManager:
             },
             "simulation": {
                 "duration": network.simulation_duration,
-                "units": "seconds"
+                "units": "seconds",
+                "flows": [
+                    self._serialize_flow(flow)
+                    for flow in network.saved_flows
+                ]
             },
             "topology": {
                 "nodes": [
@@ -118,8 +122,31 @@ class ProjectManager:
             }
         }
     
+    def _serialize_flow(self, flow) -> dict:
+        """Convert TrafficFlow to dictionary."""
+        # Handle both TrafficFlow objects and dicts
+        if isinstance(flow, dict):
+            return flow
+        
+        return {
+            "id": flow.id,
+            "name": flow.name,
+            "source_node_id": flow.source_node_id,
+            "target_node_id": flow.target_node_id,
+            "protocol": flow.protocol.value if hasattr(flow.protocol, 'value') else flow.protocol,
+            "application": flow.application.value if hasattr(flow.application, 'value') else flow.application,
+            "start_time": flow.start_time,
+            "stop_time": flow.stop_time,
+            "data_rate": flow.data_rate,
+            "packet_size": flow.packet_size,
+            "echo_packets": flow.echo_packets,
+            "echo_interval": flow.echo_interval
+        }
+    
     def _serialize_node(self, node: NodeModel) -> dict:
         """Convert NodeModel to dictionary."""
+        from models import RoutingMode
+        
         # Base node properties
         node_data = {
             "id": node.id,
@@ -135,6 +162,17 @@ class ProjectManager:
                 for port in node.ports
             ]
         }
+        
+        # Routing configuration (for hosts and routers)
+        if node.node_type in (NodeType.HOST, NodeType.ROUTER):
+            node_data["routing"] = {
+                "mode": node.routing_mode.name.lower(),
+                "default_gateway": node.default_gateway,
+                "routes": [
+                    self._serialize_route(route)
+                    for route in node.routing_table
+                ]
+            }
         
         # Type-specific properties
         if node.node_type == NodeType.HOST:
@@ -155,6 +193,19 @@ class ProjectManager:
             }
         
         return node_data
+    
+    def _serialize_route(self, route) -> dict:
+        """Convert RouteEntry to dictionary."""
+        return {
+            "id": route.id,
+            "destination": route.destination,
+            "prefix_length": route.prefix_length,
+            "gateway": route.gateway,
+            "interface": route.interface,
+            "metric": route.metric,
+            "route_type": route.route_type.name.lower(),
+            "enabled": route.enabled
+        }
     
     def _serialize_port(self, port: PortConfig) -> dict:
         """Convert PortConfig to dictionary."""
@@ -215,6 +266,12 @@ class ProjectManager:
         # Load simulation settings
         if "simulation" in data:
             network.simulation_duration = data["simulation"].get("duration", 10.0)
+            
+            # Load saved flows
+            for flow_data in data["simulation"].get("flows", []):
+                flow = self._deserialize_flow(flow_data)
+                if flow:
+                    network.saved_flows.append(flow)
         
         # Load topology
         topology = data.get("topology", {})
@@ -232,7 +289,47 @@ class ProjectManager:
         # Update subnet counter based on loaded links
         network._next_subnet = len(network.links) + 1
         
+        # Validate flows - remove any that reference deleted nodes
+        valid_node_ids = set(network.nodes.keys())
+        network.saved_flows = [
+            f for f in network.saved_flows
+            if f.source_node_id in valid_node_ids and f.target_node_id in valid_node_ids
+        ]
+        
         return network
+    
+    def _deserialize_flow(self, data: dict):
+        """Convert dictionary to TrafficFlow."""
+        from models import TrafficFlow, TrafficProtocol, TrafficApplication
+        
+        # Parse protocol
+        protocol_str = data.get("protocol", "udp").lower()
+        try:
+            protocol = TrafficProtocol(protocol_str)
+        except ValueError:
+            protocol = TrafficProtocol.UDP
+        
+        # Parse application
+        app_str = data.get("application", "echo").lower()
+        try:
+            application = TrafficApplication(app_str)
+        except ValueError:
+            application = TrafficApplication.ECHO
+        
+        return TrafficFlow(
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            source_node_id=data.get("source_node_id", ""),
+            target_node_id=data.get("target_node_id", ""),
+            protocol=protocol,
+            application=application,
+            start_time=data.get("start_time", 1.0),
+            stop_time=data.get("stop_time", 9.0),
+            data_rate=data.get("data_rate", "1Mbps"),
+            packet_size=data.get("packet_size", 1024),
+            echo_packets=data.get("echo_packets", 10),
+            echo_interval=data.get("echo_interval", 1.0)
+        )
     
     def _deserialize_node(self, data: dict) -> NodeModel:
         """Convert dictionary to NodeModel."""
@@ -265,6 +362,24 @@ class ProjectManager:
                 port = self._deserialize_port(port_data)
                 node.ports.append(port)
         
+        # Load routing configuration
+        routing_data = data.get("routing", {})
+        if routing_data:
+            from models import RoutingMode
+            mode_str = routing_data.get("mode", "auto").upper()
+            try:
+                node.routing_mode = RoutingMode[mode_str]
+            except KeyError:
+                node.routing_mode = RoutingMode.AUTO
+            
+            node.default_gateway = routing_data.get("default_gateway", "")
+            
+            # Load routes
+            node.routing_table.clear()
+            for route_data in routing_data.get("routes", []):
+                route = self._deserialize_route(route_data)
+                node.routing_table.append(route)
+        
         # Load type-specific config
         if node_type == NodeType.HOST:
             host_config = data.get("host_config", {})
@@ -283,6 +398,27 @@ class ProjectManager:
             node.subnet_mask = switch_config.get("subnet_mask", "255.255.255.0")
         
         return node
+    
+    def _deserialize_route(self, data: dict):
+        """Convert dictionary to RouteEntry."""
+        from models import RouteEntry, RouteType
+        
+        type_str = data.get("route_type", "static").upper()
+        try:
+            route_type = RouteType[type_str]
+        except KeyError:
+            route_type = RouteType.STATIC
+        
+        return RouteEntry(
+            id=data.get("id", ""),
+            destination=data.get("destination", "0.0.0.0"),
+            prefix_length=data.get("prefix_length", 24),
+            gateway=data.get("gateway", "0.0.0.0"),
+            interface=data.get("interface", 0),
+            metric=data.get("metric", 1),
+            route_type=route_type,
+            enabled=data.get("enabled", True)
+        )
     
     def _deserialize_port(self, data: dict) -> PortConfig:
         """Convert dictionary to PortConfig."""

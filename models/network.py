@@ -24,6 +24,71 @@ class ChannelType(Enum):
     CSMA = auto()
 
 
+class RoutingMode(Enum):
+    """How routing is configured for a node."""
+    AUTO = auto()       # Use GlobalRoutingHelper (automatic shortest path)
+    MANUAL = auto()     # User-defined static routes only
+
+
+class RouteType(Enum):
+    """Type of routing table entry."""
+    CONNECTED = auto()  # Directly connected network (auto-detected)
+    STATIC = auto()     # Manually configured static route
+    DEFAULT = auto()    # Default gateway route
+
+
+@dataclass
+class RouteEntry:
+    """A single routing table entry."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    destination: str = "0.0.0.0"      # Network address (e.g., "10.1.1.0")
+    prefix_length: int = 24            # CIDR prefix (e.g., 24 for /24)
+    gateway: str = "0.0.0.0"          # Next hop IP (0.0.0.0 = directly connected)
+    interface: int = 0                 # Output interface index
+    metric: int = 1                    # Route priority/cost
+    route_type: RouteType = RouteType.STATIC
+    enabled: bool = True
+    
+    @property
+    def netmask(self) -> str:
+        """Convert prefix length to dotted decimal netmask."""
+        if self.prefix_length == 0:
+            return "0.0.0.0"
+        bits = (0xFFFFFFFF << (32 - self.prefix_length)) & 0xFFFFFFFF
+        return f"{(bits >> 24) & 0xFF}.{(bits >> 16) & 0xFF}.{(bits >> 8) & 0xFF}.{bits & 0xFF}"
+    
+    @property
+    def cidr(self) -> str:
+        """Return destination in CIDR notation."""
+        return f"{self.destination}/{self.prefix_length}"
+    
+    @property
+    def is_default_route(self) -> bool:
+        """Check if this is a default route."""
+        return self.destination == "0.0.0.0" and self.prefix_length == 0
+    
+    @property
+    def is_direct(self) -> bool:
+        """Check if this is a directly connected route."""
+        return self.gateway == "0.0.0.0" or self.route_type == RouteType.CONNECTED
+    
+    def matches_network(self, ip: str) -> bool:
+        """Check if an IP address matches this route's network."""
+        try:
+            # Convert IPs to integers for comparison
+            def ip_to_int(ip_str):
+                parts = ip_str.split('.')
+                return (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
+            
+            ip_int = ip_to_int(ip)
+            dest_int = ip_to_int(self.destination)
+            mask_int = (0xFFFFFFFF << (32 - self.prefix_length)) & 0xFFFFFFFF
+            
+            return (ip_int & mask_int) == (dest_int & mask_int)
+        except:
+            return False
+
+
 class PortType(Enum):
     """Types of physical ports."""
     ETHERNET = auto()
@@ -170,6 +235,11 @@ class NodeModel:
     subnet_mask: str = "255.255.255.0"
     _next_host_ip: int = field(default=1, repr=False)  # Next host IP in subnet
     
+    # Routing table (for hosts and routers)
+    routing_mode: RoutingMode = RoutingMode.AUTO
+    routing_table: list[RouteEntry] = field(default_factory=list)
+    default_gateway: str = ""  # Shortcut for hosts
+    
     # Common optional properties
     description: str = ""
     
@@ -244,6 +314,57 @@ class NodeModel:
                 return port
         return None
     
+    # Routing table management methods
+    def add_route(self, route: RouteEntry) -> None:
+        """Add a route to the routing table."""
+        self.routing_table.append(route)
+    
+    def remove_route(self, route_id: str) -> bool:
+        """Remove a route by ID."""
+        for i, route in enumerate(self.routing_table):
+            if route.id == route_id:
+                self.routing_table.pop(i)
+                return True
+        return False
+    
+    def get_route(self, route_id: str) -> Optional[RouteEntry]:
+        """Get a route by ID."""
+        for route in self.routing_table:
+            if route.id == route_id:
+                return route
+        return None
+    
+    def clear_routes(self, route_type: Optional[RouteType] = None) -> None:
+        """Clear routes, optionally filtered by type."""
+        if route_type is None:
+            self.routing_table.clear()
+        else:
+            self.routing_table = [r for r in self.routing_table if r.route_type != route_type]
+    
+    def get_routes_by_type(self, route_type: RouteType) -> list[RouteEntry]:
+        """Get all routes of a specific type."""
+        return [r for r in self.routing_table if r.route_type == route_type]
+    
+    def has_default_route(self) -> bool:
+        """Check if there's a default route configured."""
+        return any(r.is_default_route for r in self.routing_table)
+    
+    def set_default_gateway_route(self, gateway: str, interface: int = 0) -> None:
+        """Set or update the default gateway route."""
+        # Remove existing default route
+        self.routing_table = [r for r in self.routing_table if not r.is_default_route]
+        
+        # Add new default route
+        if gateway:
+            self.default_gateway = gateway
+            self.routing_table.append(RouteEntry(
+                destination="0.0.0.0",
+                prefix_length=0,
+                gateway=gateway,
+                interface=interface,
+                route_type=RouteType.DEFAULT
+            ))
+    
     # Legacy compatibility - interfaces property maps to ports
     @property
     def interfaces(self) -> list[PortConfig]:
@@ -311,6 +432,9 @@ class NetworkModel:
     
     # Global simulation settings
     simulation_duration: float = 10.0  # seconds
+    
+    # Saved traffic flows (referenced by node IDs)
+    saved_flows: list = field(default_factory=list)  # List of TrafficFlow-like dicts
     
     # Auto IP assignment tracking
     _next_subnet: int = field(default=1, repr=False)

@@ -362,9 +362,17 @@ def main():
     
     def _generate_routing(self, network: NetworkModel) -> str:
         """Generate routing configuration."""
+        from models import RoutingMode, RouteType
+        
         # Check if we have routers that need routing
         has_routers = any(
             node.node_type == NodeType.ROUTER 
+            for node in network.nodes.values()
+        )
+        
+        # Check if any node has manual routing configured
+        has_manual_routing = any(
+            node.routing_mode == RoutingMode.MANUAL and len(node.routing_table) > 0
             for node in network.nodes.values()
         )
         
@@ -374,13 +382,68 @@ def main():
             "    # ============================================",
         ]
         
-        if has_routers:
+        if has_manual_routing:
+            # Generate static routes for nodes with manual routing
+            lines.extend([
+                "    # Manual static routing configuration",
+                "",
+            ])
+            
+            for node_id, node in network.nodes.items():
+                if node.routing_mode != RoutingMode.MANUAL or not node.routing_table:
+                    continue
+                
+                node_idx = self._node_index_map.get(node_id, 0)
+                
+                lines.extend([
+                    f"    # Static routes for {node.name}",
+                    f"    static_routing{node_idx} = ns.Ipv4StaticRouting()",
+                    f"    node{node_idx}_ipv4 = nodes.Get({node_idx}).GetObject[ns.Ipv4]()",
+                    "",
+                ])
+                
+                for route in node.routing_table:
+                    if not route.enabled:
+                        continue
+                    
+                    if route.is_direct:
+                        # Directly connected - use interface
+                        lines.append(
+                            f"    # Route: {route.cidr} via interface {route.interface}"
+                        )
+                    else:
+                        # Route through gateway
+                        lines.append(
+                            f"    # Route: {route.cidr} via {route.gateway}"
+                        )
+                
+                lines.append("")
+            
+            # Still populate global routing for nodes without manual routes
+            lines.extend([
+                "    # Use global routing for nodes without manual routes",
+                "    ns.Ipv4GlobalRoutingHelper.PopulateRoutingTables()",
+                "",
+            ])
+        
+        elif has_routers:
             # Use global routing - automatically computes shortest paths
             lines.extend([
                 "    # Enable global routing (automatically computes routes)",
                 "    ns.Ipv4GlobalRoutingHelper.PopulateRoutingTables()",
                 "    print('Routing tables populated via global routing')",
                 "",
+            ])
+        else:
+            lines.extend([
+                "    # No routers - no explicit routing needed",
+                "    # (direct links or bridged network)",
+                "",
+            ])
+        
+        # Print routing tables
+        if has_routers or has_manual_routing:
+            lines.extend([
                 "    # Print routing tables",
                 "    print('\\n' + '=' * 60)",
                 "    print('ROUTING TABLES')",
@@ -388,46 +451,47 @@ def main():
                 "",
             ])
             
-            # Print routing info for each node based on its interfaces
+            # Print routing info for each node
             for node_id, node in network.nodes.items():
                 node_idx = self._node_index_map.get(node_id, 0)
-                
-                # Find all links connected to this node
-                connected_links = []
-                for link_idx, (link_id, link) in enumerate(network.links.items()):
-                    if link.source_node_id == node_id:
-                        connected_links.append((link_idx, True))  # True = node is source
-                    elif link.target_node_id == node_id:
-                        connected_links.append((link_idx, False))  # False = node is target
                 
                 lines.append(f"    print(f'\\nNode {node_idx} ({node.name}):')")
                 lines.append(f"    print('-' * 40)")
                 
-                if node.node_type == NodeType.ROUTER:
-                    # Router - show all directly connected networks
-                    for link_idx, is_source in connected_links:
-                        iface_idx = 0 if is_source else 1
-                        lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (interface {link_idx + 1})')")
+                if node.routing_mode == RoutingMode.MANUAL and node.routing_table:
+                    # Print manually configured routes
+                    lines.append(f"    print('  [Manual Routing Mode]')")
+                    for route in node.routing_table:
+                        if route.enabled:
+                            gw_str = "direct" if route.is_direct else route.gateway
+                            lines.append(f"    print('  {route.cidr} via {gw_str} (if{route.interface})')")
                 else:
-                    # Host - show local network and routes through router
-                    if connected_links:
-                        link_idx, is_source = connected_links[0]
-                        # Local network
-                        lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (local)')")
-                        # Default route to router
-                        gateway_idx = 1 if is_source else 0
-                        lines.append(f"    print(f'  0.0.0.0/0 via 10.1.{link_idx + 1}.{2 if is_source else 1} (default)')")
+                    # Print auto-computed routes
+                    lines.append(f"    print('  [Auto Routing Mode]')")
+                    
+                    # Find all links connected to this node
+                    connected_links = []
+                    for link_idx, (link_id, link) in enumerate(network.links.items()):
+                        if link.source_node_id == node_id:
+                            connected_links.append((link_idx, True))
+                        elif link.target_node_id == node_id:
+                            connected_links.append((link_idx, False))
+                    
+                    if node.node_type == NodeType.ROUTER:
+                        for link_idx, is_source in connected_links:
+                            lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (interface {link_idx + 1})')")
+                    else:
+                        if connected_links:
+                            link_idx, is_source = connected_links[0]
+                            lines.append(f"    print(f'  10.1.{link_idx + 1}.0/24 via direct (local)')")
+                            lines.append(f"    print(f'  0.0.0.0/0 via 10.1.{link_idx + 1}.{2 if is_source else 1} (default)')")
                 
                 lines.append("")
             
             lines.append("    print()")
-            lines.append("")
-        else:
-            lines.extend([
-                "    # No routers - no explicit routing needed",
-                "    # (direct links or bridged network)",
-                "",
-            ])
+        
+        lines.append("")
+        return "\n".join(lines)
         
         return "\n".join(lines)
     

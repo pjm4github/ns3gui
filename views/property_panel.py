@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (
 
 from models import (
     NodeModel, LinkModel, NodeType, ChannelType,
-    PortConfig, PortType, VlanMode, PORT_TYPE_SPECS
+    PortConfig, PortType, VlanMode, PORT_TYPE_SPECS,
+    NetworkModel, RoutingMode
 )
 
 
@@ -464,11 +465,17 @@ class NodePropertiesWidget(QWidget):
     propertiesChanged = pyqtSignal()
     nodeTypeChanged = pyqtSignal(object)  # Emits new NodeType
     subnetApplied = pyqtSignal(str)  # Emits switch node ID when subnet should be applied
+    editRoutingRequested = pyqtSignal(object)  # Emits node when routing edit is requested
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._node: Optional[NodeModel] = None
+        self._network: Optional[NetworkModel] = None
         self._setup_ui()
+    
+    def set_network(self, network: 'NetworkModel'):
+        """Set the network model reference for routing dialog."""
+        self._network = network
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -571,6 +578,23 @@ class NodePropertiesWidget(QWidget):
         self._is_server_check.setStyleSheet(input_style())
         host_layout.addRow("Role:", self._is_server_check)
         
+        # Routing button
+        self._host_routing_btn = QPushButton("Edit Routing Table...")
+        self._host_routing_btn.clicked.connect(self._on_edit_routing)
+        self._host_routing_btn.setStyleSheet("""
+            QPushButton {
+                background: #3B82F6;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #2563EB;
+            }
+        """)
+        host_layout.addRow("Routing:", self._host_routing_btn)
+        
         self._type_settings_container.addWidget(self._host_widget)
     
     def _create_router_settings(self):
@@ -595,6 +619,23 @@ class NodePropertiesWidget(QWidget):
         self._forwarding_check.stateChanged.connect(self._on_router_prop_changed)
         self._forwarding_check.setStyleSheet(input_style())
         router_layout.addRow("Forwarding:", self._forwarding_check)
+        
+        # Routing table button
+        self._router_routing_btn = QPushButton("Edit Routing Table...")
+        self._router_routing_btn.clicked.connect(self._on_edit_routing)
+        self._router_routing_btn.setStyleSheet("""
+            QPushButton {
+                background: #3B82F6;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #2563EB;
+            }
+        """)
+        router_layout.addRow("Routes:", self._router_routing_btn)
         
         self._type_settings_container.addWidget(self._router_widget)
     
@@ -808,6 +849,26 @@ class NodePropertiesWidget(QWidget):
             self.subnetApplied.emit(self._node.id)
             self._update_display()
             self.propertiesChanged.emit()
+    
+    def _on_edit_routing(self):
+        """Open the routing table dialog for this node."""
+        if not self._node:
+            return
+        
+        if not self._network:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, 
+                "Routing Editor", 
+                "Network model not available. Cannot edit routing table."
+            )
+            return
+        
+        from views.routing_dialog import RoutingTableDialog
+        
+        dialog = RoutingTableDialog(self._node, self._network, self)
+        dialog.routingChanged.connect(self.propertiesChanged.emit)
+        dialog.exec()
     
     def _on_add_port(self):
         if self._node:
@@ -1094,6 +1155,7 @@ class PropertyPanel(QWidget):
     
     def set_network_model(self, model):
         self._network_model = model
+        self._node_props.set_network(model)
     
     def set_selection(self, item: Optional[Union[NodeModel, LinkModel]]):
         self._node_props.hide()
