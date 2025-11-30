@@ -342,18 +342,18 @@ To reset settings, delete this file.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Windows                                │
+│                      Windows                                 │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                  PyQt6 GUI                            │  │
-│  │  • Topology editor                                    │  │
+│  │                  PyQt6 GUI                             │  │
+│  │  • Topology editor                                     │  │
 │  │  • Generate ns-3 Python script                        │  │
-│  │  • Display results                                    │  │
+│  │  • Display results                                     │  │
 │  └───────────────────────────────────────────────────────┘  │
-│                            │                                │
+│                            │                                 │
 │                    wsl -e bash -c "..."                     │
-│                            ▼                                │
+│                            ▼                                 │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                  WSL2 (Ubuntu)                        │  │
+│  │                  WSL2 (Ubuntu)                         │  │
 │  │  • ns-3 simulator with Python bindings (cppyy)        │  │
 │  │  • Execute: ./ns3 run scratch/gui_simulation.py       │  │
 │  │  • Output via stdout back to GUI                      │  │

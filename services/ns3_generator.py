@@ -130,7 +130,7 @@ def main():
             "    # Point-to-point helper for direct links",
             "    p2p = ns.PointToPointHelper()",
             "",
-            "    # CSMA helper for shared medium (switch/hub)",
+            "    # CSMA helper for shared medium (switch connections)",
             "    csma = ns.CsmaHelper()",
             "",
             "    # Store all NetDeviceContainers",
@@ -148,20 +148,15 @@ def main():
             source_name = source_node.name if source_node else "unknown"
             target_name = target_node.name if target_node else "unknown"
             
+            # Check if either end is a switch - must use CSMA for bridging
+            source_is_switch = source_node and source_node.node_type == NodeType.SWITCH
+            target_is_switch = target_node and target_node.node_type == NodeType.SWITCH
+            use_csma = source_is_switch or target_is_switch or link.channel_type == ChannelType.CSMA
+            
             lines.append(f"    # Link {idx}: {source_name} <-> {target_name}")
             
-            if link.channel_type == ChannelType.POINT_TO_POINT:
-                lines.extend([
-                    f"    p2p.SetDeviceAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
-                    f"    p2p.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
-                    f"    link{idx}_nodes = ns.NodeContainer()",
-                    f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
-                    f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
-                    f"    devices{idx} = p2p.Install(link{idx}_nodes)",
-                    f"    all_devices.append(devices{idx})",
-                    "",
-                ])
-            else:  # CSMA
+            if use_csma:
+                # CSMA required for switch bridging (P2P doesn't support SendFrom)
                 lines.extend([
                     f"    csma.SetChannelAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
                     f"    csma.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
@@ -172,23 +167,98 @@ def main():
                     f"    all_devices.append(devices{idx})",
                     "",
                 ])
+            else:
+                # Point-to-point for direct host-to-host links
+                lines.extend([
+                    f"    p2p.SetDeviceAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
+                    f"    p2p.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
+                    f"    link{idx}_nodes = ns.NodeContainer()",
+                    f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
+                    f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
+                    f"    devices{idx} = p2p.Install(link{idx}_nodes)",
+                    f"    all_devices.append(devices{idx})",
+                    "",
+                ])
         
         return "\n".join(lines)
     
     def _generate_internet_stack(self, network: NetworkModel) -> str:
         """Generate IP stack installation."""
+        # Find switch/router nodes that should act as bridges
+        switch_indices = []
+        host_indices = []
+        
+        for node_id, node in network.nodes.items():
+            idx = self._node_index_map.get(node_id, 0)
+            if node.node_type in (NodeType.SWITCH,):
+                switch_indices.append(idx)
+            else:
+                host_indices.append(idx)
+        
         lines = [
             "    # ============================================",
             "    # Install Internet Stack",
             "    # ============================================",
             "    internet_stack = ns.InternetStackHelper()",
-            "    internet_stack.Install(nodes)",
             "",
         ]
+        
+        if switch_indices:
+            # Only install IP stack on non-switch nodes
+            lines.extend([
+                "    # Install Internet stack only on hosts/routers (not switches)",
+                "    host_nodes = ns.NodeContainer()",
+            ])
+            for idx in host_indices:
+                lines.append(f"    host_nodes.Add(nodes.Get({idx}))")
+            lines.extend([
+                "    internet_stack.Install(host_nodes)",
+                "",
+                "    # Set up bridge on switch nodes",
+                "    bridge_helper = ns.BridgeHelper()",
+                "",
+            ])
+            
+            # For each switch, bridge all its connected devices
+            for switch_id, switch_node in network.nodes.items():
+                if switch_node.node_type not in (NodeType.SWITCH,):
+                    continue
+                
+                switch_idx = self._node_index_map.get(switch_id, 0)
+                
+                # Find all links connected to this switch
+                connected_link_indices = []
+                for link_idx, (link_id, link) in enumerate(network.links.items()):
+                    if link.source_node_id == switch_id or link.target_node_id == switch_id:
+                        connected_link_indices.append((link_idx, link.source_node_id == switch_id))
+                
+                if connected_link_indices:
+                    lines.append(f"    # Bridge devices on switch node {switch_idx} ({switch_node.name})")
+                    lines.append(f"    switch{switch_idx}_devices = ns.NetDeviceContainer()")
+                    
+                    for link_idx, is_source in connected_link_indices:
+                        # Device index: 0 if switch is source, 1 if switch is target
+                        dev_idx = 0 if is_source else 1
+                        lines.append(f"    switch{switch_idx}_devices.Add(devices{link_idx}.Get({dev_idx}))")
+                    
+                    lines.append(f"    bridge_helper.Install(nodes.Get({switch_idx}), switch{switch_idx}_devices)")
+                    lines.append("")
+        else:
+            lines.extend([
+                "    internet_stack.Install(nodes)",
+                "",
+            ])
+        
         return "\n".join(lines)
     
     def _generate_ip_addresses(self, network: NetworkModel) -> str:
         """Generate IP address assignment."""
+        # Check if we have switches (bridged network)
+        has_switches = any(
+            node.node_type in (NodeType.SWITCH,) 
+            for node in network.nodes.values()
+        )
+        
         lines = [
             "    # ============================================",
             "    # Assign IP Addresses",
@@ -200,15 +270,66 @@ def main():
             "",
         ]
         
-        for idx, (link_id, link) in enumerate(network.links.items()):
-            # Use subnet based on link index
-            subnet = f"10.1.{idx + 1}.0"
+        if has_switches:
+            # With bridges, use same subnet for all host interfaces
+            # Only assign IPs to host endpoints, not switch interfaces
             lines.extend([
-                f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('255.255.255.0'))",
-                f"    interfaces{idx} = ipv4.Assign(devices{idx})",
-                f"    all_interfaces.append(interfaces{idx})",
+                "    # Using single subnet for bridged network",
+                "    ipv4.SetBase(ns.Ipv4Address('10.1.1.0'), ns.Ipv4Mask('255.255.255.0'))",
                 "",
             ])
+            
+            host_ip_counter = 1
+            for idx, (link_id, link) in enumerate(network.links.items()):
+                source_node = network.nodes.get(link.source_node_id)
+                target_node = network.nodes.get(link.target_node_id)
+                
+                source_is_switch = source_node and source_node.node_type in (NodeType.SWITCH,)
+                target_is_switch = target_node and target_node.node_type in (NodeType.SWITCH,)
+                
+                # Create interface container for this link
+                lines.append(f"    interfaces{idx} = ns.Ipv4InterfaceContainer()")
+                
+                if not source_is_switch and not target_is_switch:
+                    # Direct host-to-host link, assign both
+                    lines.extend([
+                        f"    ipv4.SetBase(ns.Ipv4Address('10.1.{idx+1}.0'), ns.Ipv4Mask('255.255.255.0'))",
+                        f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    ])
+                elif source_is_switch and not target_is_switch:
+                    # Only assign IP to target (host)
+                    lines.extend([
+                        f"    # Only assign IP to host endpoint (not switch)",
+                        f"    host_dev{idx} = ns.NetDeviceContainer()",
+                        f"    host_dev{idx}.Add(devices{idx}.Get(1))",
+                        f"    interfaces{idx} = ipv4.Assign(host_dev{idx})",
+                    ])
+                elif not source_is_switch and target_is_switch:
+                    # Only assign IP to source (host)
+                    lines.extend([
+                        f"    # Only assign IP to host endpoint (not switch)",
+                        f"    host_dev{idx} = ns.NetDeviceContainer()",
+                        f"    host_dev{idx}.Add(devices{idx}.Get(0))",
+                        f"    interfaces{idx} = ipv4.Assign(host_dev{idx})",
+                    ])
+                else:
+                    # Both are switches - no IP assignment
+                    lines.append(f"    # Switch-to-switch link, no IP assignment")
+                
+                lines.extend([
+                    f"    all_interfaces.append(interfaces{idx})",
+                    "",
+                ])
+        else:
+            # No switches - use separate subnet per link
+            for idx, (link_id, link) in enumerate(network.links.items()):
+                subnet = f"10.1.{idx + 1}.0"
+                lines.extend([
+                    f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('255.255.255.0'))",
+                    f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    f"    all_interfaces.append(interfaces{idx})",
+                    "",
+                ])
         
         # Print IP addresses for reference
         lines.extend([
@@ -222,9 +343,17 @@ def main():
             source_name = source_node.name if source_node else "unknown"
             target_name = target_node.name if target_node else "unknown"
             
-            lines.extend([
-                f"    print(f'  Link {idx}: {{interfaces{idx}.GetAddress(0)}} ({source_name}) <-> {{interfaces{idx}.GetAddress(1)}} ({target_name})')",
-            ])
+            source_is_switch = source_node and source_node.node_type in (NodeType.SWITCH,)
+            target_is_switch = target_node and target_node.node_type in (NodeType.SWITCH,)
+            
+            if source_is_switch and target_is_switch:
+                lines.append(f"    print(f'  Link {idx}: {source_name} <-> {target_name} (no IP - switch link)')")
+            elif source_is_switch:
+                lines.append(f"    print(f'  Link {idx}: {source_name} (switch) <-> {{interfaces{idx}.GetAddress(0)}} ({target_name})')")
+            elif target_is_switch:
+                lines.append(f"    print(f'  Link {idx}: {{interfaces{idx}.GetAddress(0)}} ({source_name}) <-> {target_name} (switch)')")
+            else:
+                lines.append(f"    print(f'  Link {idx}: {{interfaces{idx}.GetAddress(0)}} ({source_name}) <-> {{interfaces{idx}.GetAddress(1)}} ({target_name})')")
         
         lines.append("    print()")
         lines.append("")
@@ -287,25 +416,52 @@ def main():
     ) -> list[str]:
         """Generate UDP Echo client/server application."""
         # Find the interface address for the target node
-        # We need to find which link connects to the target
+        # We need to find which link connects to the target (directly or through switch)
         target_link_idx = None
-        target_is_first = True
+        interface_idx = 0  # Default to first interface
+        
+        target_node = network.nodes.get(flow.target_node_id)
         
         for idx, (link_id, link) in enumerate(network.links.items()):
+            link_source = network.nodes.get(link.source_node_id)
+            link_target = network.nodes.get(link.target_node_id)
+            
+            # Check if target node is directly connected to this link
             if link.target_node_id == flow.target_node_id:
-                target_link_idx = idx
-                target_is_first = False
+                # Target is the "target" side of the link
+                target_is_switch = link_target and link_target.node_type in (NodeType.SWITCH,)
+                source_is_switch = link_source and link_source.node_type in (NodeType.SWITCH,)
+                
+                if source_is_switch:
+                    # Link is: switch -> target_host
+                    # IP is assigned to host only (index 0 in the single-device container)
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    # Link is: host -> target_host (direct)
+                    target_link_idx = idx
+                    interface_idx = 1
                 break
             elif link.source_node_id == flow.target_node_id:
-                target_link_idx = idx
-                target_is_first = True
+                # Target is the "source" side of the link
+                target_is_switch = link_source and link_source.node_type in (NodeType.SWITCH,)
+                source_is_switch = link_target and link_target.node_type in (NodeType.SWITCH,)
+                
+                if source_is_switch:
+                    # Link is: target_host -> switch
+                    # IP is assigned to host only (index 0 in the single-device container)
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    # Link is: target_host -> host (direct)
+                    target_link_idx = idx
+                    interface_idx = 0
                 break
         
         if target_link_idx is None:
             return [f"    # Flow {flow_idx}: Cannot find interface for target node", ""]
         
         port = 9000 + flow_idx
-        interface_idx = 0 if target_is_first else 1
         
         lines = [
             f"    # UDP Echo Server on node {target_idx}",
@@ -316,6 +472,7 @@ def main():
             "",
             f"    # UDP Echo Client on node {source_idx}",
             f"    target_addr{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    print(f'Flow {flow_idx}: Sending to {{target_addr{flow_idx}}}:{port}')",
             f"    remote_addr{flow_idx} = ns.InetSocketAddress(target_addr{flow_idx}, {port})",
             f"    echo_client{flow_idx} = ns.UdpEchoClientHelper(remote_addr{flow_idx}.ConvertTo())",
             f"    echo_client{flow_idx}.SetAttribute('MaxPackets', ns.UintegerValue({flow.echo_packets}))",
