@@ -243,7 +243,8 @@ class ProjectManager:
         except KeyError:
             node_type = NodeType.HOST
         
-        # Create node with basic properties (don't auto-create ports)
+        # Create node with basic properties
+        # Note: __post_init__ will create default ports, we'll replace them if data has ports
         node = NodeModel(
             id=data.get("id", ""),
             node_type=node_type,
@@ -253,17 +254,16 @@ class ProjectManager:
                 x=data.get("position", {}).get("x", 0),
                 y=data.get("position", {}).get("y", 0)
             ),
-            ports=[]  # Will load from data
         )
         
-        # Load ports
-        for port_data in data.get("ports", []):
-            port = self._deserialize_port(port_data)
-            node.ports.append(port)
-        
-        # If no ports in data, initialize defaults
-        if not node.ports:
-            node._initialize_default_ports()
+        # Load ports from data (replace auto-generated defaults)
+        saved_ports = data.get("ports", [])
+        if saved_ports:
+            # Clear auto-generated ports and load saved ones
+            node.ports.clear()
+            for port_data in saved_ports:
+                port = self._deserialize_port(port_data)
+                node.ports.append(port)
         
         # Load type-specific config
         if node_type == NodeType.HOST:
