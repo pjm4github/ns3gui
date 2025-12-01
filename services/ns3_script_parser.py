@@ -21,30 +21,65 @@ from datetime import datetime
 from enum import Enum
 
 
-class LinkType(Enum):
-    """Types of network links in ns-3."""
+class ChannelMedium(Enum):
+    """
+    Types of network channel/medium in ns-3.
+    
+    This represents the physical layer connection type, NOT a node type.
+    - POINT_TO_POINT: Direct dedicated link between exactly 2 nodes
+    - CSMA: Shared medium (like Ethernet hub/bus) where multiple nodes share bandwidth
+    - WIFI: Wireless shared medium with 802.11 protocol
+    - LTE: Cellular network connection
+    """
     POINT_TO_POINT = "point-to-point"
-    CSMA = "csma"
+    CSMA = "csma"  # Carrier Sense Multiple Access - shared Ethernet-like medium
     WIFI = "wifi"
     LTE = "lte"
     UNKNOWN = "unknown"
 
 
-class NodeType(Enum):
-    """Inferred node types."""
-    HOST = "host"
-    ROUTER = "router"
-    SWITCH = "switch"
-    ACCESS_POINT = "access_point"
+# Alias for backward compatibility
+LinkType = ChannelMedium
+
+
+class NodeRole(Enum):
+    """
+    Inferred role of a node in the network.
+    
+    Note: In ns-3, all nodes are generic - their "type" is inferred from:
+    - Number of connections (many connections -> likely a router)
+    - Applications installed (server apps vs client apps)
+    - Position in topology (edge vs center)
+    """
+    HOST = "host"          # End device (client or server)
+    ROUTER = "router"      # Forwards packets between networks
+    SWITCH = "switch"      # Layer 2 device (GUI representation of CSMA segment)
+    ACCESS_POINT = "access_point"  # Wireless access point
     UNKNOWN = "unknown"
+
+
+# Alias for backward compatibility
+NodeType = NodeRole
 
 
 @dataclass
 class ExtractedNode:
-    """A node extracted from ns-3 script."""
+    """
+    A node extracted from ns-3 script.
+    
+    In ns-3, all nodes are generic NodeContainer entries. The "type" here
+    is inferred based on connectivity and installed applications, not 
+    explicitly defined in the script.
+    
+    Attributes:
+        container_name: Name of the NodeContainer (e.g., "nodes", "servers")
+        index: Index within the container
+        node_type: Inferred role (HOST, ROUTER, etc.)
+        inferred_role: More specific role description (e.g., "server", "client")
+    """
     container_name: str
     index: int
-    node_type: NodeType = NodeType.HOST
+    node_type: NodeRole = NodeRole.HOST
     inferred_role: str = ""  # e.g., "server", "client", "gateway"
     
     @property
@@ -55,12 +90,30 @@ class ExtractedNode:
 
 @dataclass
 class ExtractedLink:
-    """A link extracted from ns-3 script."""
+    """
+    A network connection extracted from ns-3 script.
+    
+    Represents the channel/medium connecting nodes. The channel_medium
+    determines how nodes communicate:
+    - POINT_TO_POINT: Dedicated link between exactly 2 nodes
+    - CSMA: Shared medium (multiple nodes, like Ethernet bus/hub)
+    - WIFI: Wireless shared medium
+    
+    Attributes:
+        source_container: NodeContainer name for source node
+        source_index: Index of source node in its container
+        target_container: NodeContainer name for target node  
+        target_index: Index of target node in its container
+        link_type: Channel medium type (POINT_TO_POINT, CSMA, etc.)
+        data_rate: Configured data rate (e.g., "5Mbps", "1Gbps")
+        delay: Configured delay (e.g., "2ms", "10us")
+        device_container: Name of the NetDeviceContainer variable
+    """
     source_container: str
     source_index: int
     target_container: str
     target_index: int
-    link_type: LinkType = LinkType.POINT_TO_POINT
+    link_type: ChannelMedium = ChannelMedium.POINT_TO_POINT
     data_rate: str = ""
     delay: str = ""
     device_container: str = ""  # Name of NetDeviceContainer

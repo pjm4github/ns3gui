@@ -12,16 +12,30 @@ import uuid
 
 
 class NodeType(Enum):
-    """Types of network nodes supported in MVP."""
-    HOST = auto()
-    ROUTER = auto()
-    SWITCH = auto()
+    """
+    Types of network nodes supported in the GUI.
+    
+    Note: In ns-3, all nodes are generic. This type is for GUI visualization
+    and determines the icon/behavior in the editor.
+    """
+    HOST = auto()    # End device (client, server, workstation)
+    ROUTER = auto()  # Forwards packets between networks
+    SWITCH = auto()  # Layer 2 device (also used to visualize CSMA segments)
 
 
 class ChannelType(Enum):
-    """Types of network channels/links supported in MVP."""
-    POINT_TO_POINT = auto()
-    CSMA = auto()
+    """
+    Types of network channel/medium for links.
+    
+    This represents the physical layer connection type:
+    - POINT_TO_POINT: Dedicated link between exactly 2 nodes (like a cable)
+    - CSMA: Shared medium where multiple nodes share bandwidth (like Ethernet hub)
+    
+    In ns-3, CSMA uses Carrier Sense Multiple Access protocol where nodes
+    listen before transmitting to avoid collisions.
+    """
+    POINT_TO_POINT = auto()  # Dedicated point-to-point link
+    CSMA = auto()            # Carrier Sense Multiple Access (shared medium)
 
 
 class RoutingMode(Enum):

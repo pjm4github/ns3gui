@@ -4,6 +4,11 @@ Topology Converter.
 Converts ExtractedTopology from ns-3 script parsing to NetworkModel
 for use in the GUI editor.
 
+Key concepts:
+- ns-3 nodes are generic; their "type" (host/router) is inferred from connectivity
+- CSMA (shared medium) segments are represented visually with a switch node
+- Point-to-point links are direct connections between exactly 2 nodes
+
 Also handles saving to workspace with mirrored directory structure.
 """
 
@@ -19,7 +24,11 @@ from models.network import (
 from models.simulation import SimulationConfig, TrafficFlow
 from services.ns3_script_parser import (
     ExtractedTopology, ExtractedNode, ExtractedLink,
-    LinkType as ExtractedLinkType, NodeType as ExtractedNodeType
+    ChannelMedium as ExtractedChannelMedium, 
+    NodeRole as ExtractedNodeRole,
+    # Aliases for backward compatibility
+    LinkType as ExtractedLinkType, 
+    NodeType as ExtractedNodeType
 )
 
 
@@ -33,16 +42,22 @@ class TopologyConverter:
     Convert ExtractedTopology to NetworkModel.
     
     Handles:
-    - Creating nodes with appropriate types
-    - Creating links between nodes
-    - Auto-layout of nodes
+    - Creating nodes with inferred roles (host, router, switch)
+    - Creating links between nodes based on channel medium
+    - Auto-layout of nodes for visual display
     - IP address assignment based on extracted data
-    - Creating switch nodes for CSMA segments
+    - Creating virtual switch nodes to represent CSMA shared medium segments
+    
+    CSMA Representation:
+        In ns-3, CSMA is a shared medium where all nodes can hear each other
+        (like an Ethernet hub or bus). In the GUI, we represent this with a
+        central switch node connected to all nodes on the segment. This is a
+        visual simplification - the actual ns-3 simulation uses true CSMA.
     """
     
     def __init__(self):
         self.node_spacing = 150  # Pixels between nodes
-        self.switch_nodes: Dict[str, str] = {}  # CSMA segment -> switch node ID
+        self.csma_switch_nodes: Dict[str, str] = {}  # CSMA segment -> virtual switch node ID
     
     def convert(self, extracted: ExtractedTopology) -> NetworkModel:
         """
@@ -90,12 +105,13 @@ class TopologyConverter:
         # First pass: identify CSMA segments that need switches
         csma_segments = self._identify_csma_segments(extracted)
         
-        # Create switch nodes for CSMA segments
+        # Create virtual switch nodes to represent CSMA shared medium segments
+        # (Visual representation - actual ns-3 uses true CSMA channel)
         for segment_key, node_keys in csma_segments.items():
             if len(node_keys) > 2:  # Only create switch for 3+ nodes
-                switch = self._create_switch_node(segment_key, len(network.nodes))
+                switch = self._create_csma_switch_node(segment_key, len(network.nodes))
                 network.nodes[switch.id] = switch
-                self.switch_nodes[segment_key] = switch.id
+                self.csma_switch_nodes[segment_key] = switch.id
         
         # Create regular nodes
         for ext_node in extracted.nodes:
@@ -158,13 +174,20 @@ class TopologyConverter:
         
         return segments
     
-    def _create_switch_node(self, segment_key: str, index: int) -> NodeModel:
-        """Create a switch node for a CSMA segment."""
+    def _create_csma_switch_node(self, segment_key: str, index: int) -> NodeModel:
+        """
+        Create a virtual switch node to represent a CSMA shared medium segment.
+        
+        This is a GUI representation only - in the actual ns-3 simulation,
+        CSMA nodes communicate via a shared channel (like an Ethernet hub/bus),
+        not through a switch. The switch visualization helps users understand
+        which nodes share bandwidth on the same collision domain.
+        """
         node = NodeModel(
             id=generate_id(),
-            name=f"switch_{segment_key}",
+            name=f"csma_hub_{segment_key}",
             node_type=NodeType.SWITCH,
-            description=f"Auto-generated switch for CSMA segment {segment_key}",
+            description=f"Virtual hub representing CSMA shared medium '{segment_key}' (not a real ns-3 node)",
         )
         
         # Add multiple ports for CSMA connections
@@ -187,32 +210,13 @@ class TopologyConverter:
         # Generate name
         name = f"{ext_node.container_name}_{ext_node.index}"
         
+        # Create node - NodeModel.__post_init__ will create default ports
         node = NodeModel(
             id=generate_id(),
             name=name,
             node_type=node_type,
             description=f"From container '{ext_node.container_name}' index {ext_node.index}",
         )
-        
-        # Add default port
-        port = PortConfig(
-            id=generate_id(),
-            port_number=0,
-            port_name="gi0",
-            port_type=PortType.GIGABIT_ETHERNET,
-        )
-        node.ports.append(port)
-        
-        # Add more ports if this is a router (might have multiple connections)
-        if node_type == NodeType.ROUTER:
-            for i in range(1, 4):
-                port = PortConfig(
-                    id=generate_id(),
-                    port_number=i,
-                    port_name=f"gi{i}",
-                    port_type=PortType.GIGABIT_ETHERNET,
-                )
-                node.ports.append(port)
         
         return node
     
@@ -282,9 +286,14 @@ class TopologyConverter:
         ext_link: ExtractedLink,
         node_map: Dict[Tuple[str, int], str]
     ):
-        """Create links for CSMA segment (through switch if available)."""
+        """
+        Create links for CSMA shared medium segment.
+        
+        If 3+ nodes are on the segment, connects them through a virtual switch.
+        Otherwise creates direct CSMA links between nodes.
+        """
         segment_key = f"csma_{ext_link.source_container}"
-        switch_id = self.switch_nodes.get(segment_key)
+        switch_id = self.csma_switch_nodes.get(segment_key)
         
         if switch_id:
             # Connect nodes to switch instead of each other
