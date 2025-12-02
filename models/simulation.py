@@ -37,20 +37,36 @@ class TrafficApplication(Enum):
 
 @dataclass
 class TrafficFlow:
-    """Defines a traffic flow between two nodes."""
+    """
+    Defines a traffic flow between two nodes.
+    
+    Represents an ns-3 application configuration for traffic generation.
+    Can model OnOff, UdpEcho, BulkSend, and other application types.
+    """
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     name: str = ""
-    source_node_id: str = ""
-    target_node_id: str = ""
+    
+    # Endpoints
+    source_node_id: str = ""      # Node generating traffic
+    target_node_id: str = ""      # Node receiving traffic  
+    dest_address: str = ""        # Explicit destination IP (optional, can be inferred)
+    port: int = 9                 # Destination port
+    
+    # Application type and protocol
     protocol: TrafficProtocol = TrafficProtocol.UDP
     application: TrafficApplication = TrafficApplication.ECHO
-    start_time: float = 1.0  # seconds
-    stop_time: float = 9.0   # seconds
-    data_rate: str = "1Mbps"
-    packet_size: int = 1024  # bytes
+    
+    # Timing
+    start_time: float = 1.0       # seconds
+    stop_time: float = 9.0        # seconds
+    
+    # Traffic parameters
+    data_rate: str = "500kb/s"    # Data rate for OnOff
+    packet_size: int = 1024       # bytes
+    
     # Echo-specific
-    echo_packets: int = 10   # Number of packets to send
-    echo_interval: float = 1.0  # Interval between packets
+    echo_packets: int = 10        # Number of packets to send
+    echo_interval: float = 1.0    # Interval between packets
     
     def __post_init__(self):
         if not self.name:

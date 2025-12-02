@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from models import (
-    NodeModel, LinkModel, NodeType, ChannelType,
+    NodeModel, LinkModel, NodeType, MediumType, ChannelType,
     PortConfig, PortType, VlanMode, PORT_TYPE_SPECS,
     NetworkModel, RoutingMode
 )
@@ -464,6 +464,7 @@ class NodePropertiesWidget(QWidget):
     
     propertiesChanged = pyqtSignal()
     nodeTypeChanged = pyqtSignal(object)  # Emits new NodeType
+    mediumTypeChanged = pyqtSignal(object)  # Emits new MediumType
     subnetApplied = pyqtSignal(str)  # Emits switch node ID when subnet should be applied
     editRoutingRequested = pyqtSignal(object)  # Emits node when routing edit is requested
     
@@ -505,6 +506,17 @@ class NodePropertiesWidget(QWidget):
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         self._type_combo.setStyleSheet(input_style())
         form.addRow("Type:", self._type_combo)
+        
+        # Medium type (network connection type)
+        self._medium_combo = QComboBox()
+        self._medium_combo.addItem("Wired (Ethernet/P2P)", MediumType.WIRED)
+        self._medium_combo.addItem("WiFi Station", MediumType.WIFI_STATION)
+        self._medium_combo.addItem("WiFi Access Point", MediumType.WIFI_AP)
+        self._medium_combo.addItem("LTE User Equipment", MediumType.LTE_UE)
+        self._medium_combo.addItem("LTE eNodeB", MediumType.LTE_ENB)
+        self._medium_combo.currentIndexChanged.connect(self._on_medium_changed)
+        self._medium_combo.setStyleSheet(input_style())
+        form.addRow("Medium:", self._medium_combo)
         
         # Description
         self._desc_edit = QLineEdit()
@@ -723,6 +735,7 @@ class NodePropertiesWidget(QWidget):
         if not self._node:
             self._name_edit.clear()
             self._type_combo.setCurrentIndex(0)
+            self._medium_combo.setCurrentIndex(0)
             self._desc_edit.clear()
             self._id_label.clear()
             self._port_summary.setText("")
@@ -737,6 +750,13 @@ class NodePropertiesWidget(QWidget):
         idx = self._type_combo.findData(self._node.node_type)
         self._type_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._type_combo.blockSignals(False)
+        
+        # Update medium type combo
+        self._medium_combo.blockSignals(True)
+        medium = getattr(self._node, 'medium_type', MediumType.WIRED)
+        idx = self._medium_combo.findData(medium)
+        self._medium_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._medium_combo.blockSignals(False)
         
         self._desc_edit.blockSignals(True)
         self._desc_edit.setText(self._node.description)
@@ -810,6 +830,14 @@ class NodePropertiesWidget(QWidget):
                 self._node.node_type = new_type
                 self._update_type_specific_ui()
                 self.nodeTypeChanged.emit(new_type)
+                self.propertiesChanged.emit()
+    
+    def _on_medium_changed(self, index):
+        if self._node:
+            new_medium = self._medium_combo.currentData()
+            if new_medium != getattr(self._node, 'medium_type', MediumType.WIRED):
+                self._node.medium_type = new_medium
+                self.mediumTypeChanged.emit(new_medium)
                 self.propertiesChanged.emit()
     
     def _on_desc_changed(self, text):
@@ -1080,8 +1108,9 @@ class LinkPropertiesWidget(QWidget):
 class PropertyPanel(QWidget):
     """Main property panel that switches between node and link editors."""
     
-    propertiesChanged = pyqtSignal()
+    propertiesChanged = pyqtSignal(str)  # node_id (or empty string for links)
     nodeTypeChanged = pyqtSignal(str, object)
+    mediumTypeChanged = pyqtSignal(str, object)  # (node_id, new_medium_type)
     subnetApplied = pyqtSignal(str)  # switch_id when subnet should be applied
     
     def __init__(self, parent=None):
@@ -1132,14 +1161,15 @@ class PropertyPanel(QWidget):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         
         self._node_props = NodePropertiesWidget()
-        self._node_props.propertiesChanged.connect(self.propertiesChanged)
+        self._node_props.propertiesChanged.connect(self._on_node_properties_changed)
         self._node_props.nodeTypeChanged.connect(self._on_node_type_changed)
+        self._node_props.mediumTypeChanged.connect(self._on_medium_type_changed)
         self._node_props.subnetApplied.connect(self.subnetApplied)
         self._node_props.hide()
         self._content_layout.addWidget(self._node_props)
         
         self._link_props = LinkPropertiesWidget()
-        self._link_props.propertiesChanged.connect(self.propertiesChanged)
+        self._link_props.propertiesChanged.connect(self._on_link_properties_changed)
         self._link_props.hide()
         self._content_layout.addWidget(self._link_props)
         
@@ -1179,6 +1209,19 @@ class PropertyPanel(QWidget):
     def _on_node_type_changed(self, new_type):
         if self._current_node_id:
             self.nodeTypeChanged.emit(self._current_node_id, new_type)
+    
+    def _on_medium_type_changed(self, new_medium):
+        if self._current_node_id:
+            self.mediumTypeChanged.emit(self._current_node_id, new_medium)
+    
+    def _on_node_properties_changed(self):
+        """Forward node properties changed with node ID."""
+        node_id = self._current_node_id or ""
+        self.propertiesChanged.emit(node_id)
+    
+    def _on_link_properties_changed(self):
+        """Forward link properties changed (empty node_id)."""
+        self.propertiesChanged.emit("")
     
     def scroll_to_port(self, port_id: str):
         """Scroll to and highlight a specific port in the property panel."""

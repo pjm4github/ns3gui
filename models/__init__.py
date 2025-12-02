@@ -2,6 +2,7 @@
 
 from .network import (
     NodeType,
+    MediumType,
     ChannelType,
     PortType,
     VlanMode,
@@ -31,6 +32,7 @@ from .simulation import (
 
 __all__ = [
     "NodeType",
+    "MediumType",
     "ChannelType",
     "PortType",
     "VlanMode",

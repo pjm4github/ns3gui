@@ -16,10 +16,10 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem,
     QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsTextItem,
-    QGraphicsRectItem, QApplication, QToolTip
+    QGraphicsRectItem, QApplication, QToolTip, QMenu
 )
 
-from models import NodeType, ChannelType, Position, NetworkModel, NodeModel, LinkModel, PortConfig
+from models import NodeType, MediumType, ChannelType, PortType, Position, NetworkModel, NodeModel, LinkModel, PortConfig
 
 
 # Color scheme
@@ -29,6 +29,7 @@ COLORS = {
     NodeType.SWITCH: QColor("#50C878"),    # Green
     "link_p2p": QColor("#6B7280"),         # Gray
     "link_csma": QColor("#F59E0B"),        # Orange
+    "link_wifi": QColor("#06B6D4"),        # Cyan for WiFi
     "selection": QColor("#3B82F6"),        # Bright blue
     "hover": QColor("#60A5FA"),            # Light blue
     "grid": QColor("#E5E7EB"),             # Light gray
@@ -42,6 +43,12 @@ COLORS = {
     "route_path": QColor("#22C55E"),       # Green for route paths
     "route_default": QColor("#3B82F6"),    # Blue for default routes
     "route_highlight": QColor("#F59E0B"),  # Orange for highlighted routes
+    # Medium type colors (for wireless indicator)
+    MediumType.WIRED: QColor("#4A90D9"),       # Blue (same as host)
+    MediumType.WIFI_STATION: QColor("#06B6D4"), # Cyan
+    MediumType.WIFI_AP: QColor("#8B5CF6"),     # Violet
+    MediumType.LTE_UE: QColor("#EC4899"),      # Pink
+    MediumType.LTE_ENB: QColor("#F97316"),     # Orange
 }
 
 
@@ -49,11 +56,22 @@ class PortGraphicsItem(QGraphicsEllipseItem):
     """
     Visual representation of a port on a node.
     
-    Small circle that can be clicked to select the port
-    or dragged to create a link.
+    Shows port type abbreviation (E, FE, 1G, 10G, S, FO, W) inside the port.
+    Can be clicked to select the port or dragged to create a link.
     """
     
-    PORT_RADIUS = 6
+    PORT_RADIUS = 10  # Larger to fit text
+    
+    # Port type to label mapping
+    PORT_TYPE_LABELS = {
+        PortType.ETHERNET: "E",
+        PortType.FAST_ETHERNET: "FE",
+        PortType.GIGABIT_ETHERNET: "1G",
+        PortType.TEN_GIGABIT: "10G",
+        PortType.SERIAL: "S",
+        PortType.FIBER: "FO",
+        PortType.WIRELESS: "W",
+    }
     
     def __init__(self, port: PortConfig, angle: float, node_radius: float, 
                  parent: 'NodeGraphicsItem'):
@@ -75,12 +93,31 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         self._is_hovered = False
         self._is_selected = False
         
+        # Create label for port type
+        self._label = QGraphicsTextItem(self)
+        self._update_label()
+        
         # Enable interactions
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self.setZValue(10)  # Above node
         
         self._update_appearance()
+    
+    def _update_label(self):
+        """Update the port type label text."""
+        label_text = self.PORT_TYPE_LABELS.get(self.port.port_type, "?")
+        self._label.setPlainText(label_text)
+        
+        # Style the label
+        font = QFont("SF Pro Display", 6)
+        font.setWeight(QFont.Weight.Bold)
+        self._label.setFont(font)
+        self._label.setDefaultTextColor(QColor("white"))
+        
+        # Center the label
+        label_rect = self._label.boundingRect()
+        self._label.setPos(-label_rect.width() / 2, -label_rect.height() / 2)
     
     def _update_appearance(self):
         """Update color based on port state."""
@@ -97,6 +134,21 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 1))
+        
+        # Update label color for better contrast
+        if self._is_selected or self._is_hovered:
+            self._label.setDefaultTextColor(QColor("white"))
+        elif not self.port.enabled:
+            self._label.setDefaultTextColor(QColor("#FECACA"))  # Light red
+        elif self.port.is_connected:
+            self._label.setDefaultTextColor(QColor("white"))
+        else:
+            self._label.setDefaultTextColor(QColor("white"))
+    
+    def update_from_model(self):
+        """Update appearance from the port model (call after port type changes)."""
+        self._update_label()
+        self._update_appearance()
     
     def set_selected(self, selected: bool):
         """Set selection state."""
@@ -114,7 +166,8 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         
         # Show tooltip with port info
-        tooltip = f"{self.port.display_name}"
+        port_type_name = self.port.port_type.name.replace('_', ' ').title()
+        tooltip = f"{self.port.display_name} ({port_type_name})"
         if self.port.ip_address:
             tooltip += f"\n{self.port.ip_address}"
         if self.port.is_connected:
@@ -241,12 +294,26 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
             self._port_items[port.id] = port_item
     
     def _get_icon_char(self) -> str:
-        """Get character icon for node type."""
-        return {
+        """Get character icon for node type and medium."""
+        # Base icon from node type
+        base = {
             NodeType.HOST: "H",
             NodeType.ROUTER: "R",
             NodeType.SWITCH: "S",
         }.get(self.node_model.node_type, "?")
+        
+        # Add wireless indicator for non-wired medium
+        medium = getattr(self.node_model, 'medium_type', MediumType.WIRED)
+        if medium == MediumType.WIFI_STATION:
+            return "📶"  # WiFi station
+        elif medium == MediumType.WIFI_AP:
+            return "📡"  # Access point
+        elif medium == MediumType.LTE_UE:
+            return "📱"  # Mobile device
+        elif medium == MediumType.LTE_ENB:
+            return "🗼"  # Cell tower
+        
+        return base
     
     def get_port_item(self, port_id: str) -> Optional[PortGraphicsItem]:
         """Get the graphics item for a specific port."""
@@ -259,9 +326,14 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         self._label.setPos(-label_rect.width() / 2, self.NODE_RADIUS + 8)
     
     def update_appearance(self):
-        """Update visual appearance when node type changes."""
-        # Update colors
-        color = COLORS[self.node_model.node_type]
+        """Update visual appearance when node type or medium changes."""
+        # Get color based on medium type (if wireless) or node type
+        medium = getattr(self.node_model, 'medium_type', MediumType.WIRED)
+        if medium != MediumType.WIRED and medium in COLORS:
+            color = COLORS[medium]
+        else:
+            color = COLORS[self.node_model.node_type]
+        
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 2))
         
@@ -274,10 +346,14 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
     
     def update_ports(self):
         """Refresh port indicators to match model."""
-        self._create_port_indicators()
-        # Update existing port appearances
+        # Check if port count changed - if so, recreate all
+        if len(self._port_items) != len(self.node_model.ports):
+            self._create_port_indicators()
+            return
+        
+        # Update existing port appearances (including labels for type changes)
         for port_item in self._port_items.values():
-            port_item._update_appearance()
+            port_item.update_from_model()
     
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):
         """Handle item changes like position updates."""
@@ -308,6 +384,65 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         self.setPen(QPen(color.darker(120), 2))
         self.unsetCursor()
         super().hoverLeaveEvent(event)
+    
+    def contextMenuEvent(self, event):
+        """Show context menu for node - allows quick medium type selection."""
+        scene = self.scene()
+        if not scene or not isinstance(scene, TopologyScene):
+            return
+        
+        # Check if we're in link creation mode (port selected) - if so, don't show menu
+        if scene._link_source_port is not None:
+            return
+        
+        menu = QMenu()
+        menu.setStyleSheet("""
+            QMenu {
+                background: white;
+                border: 1px solid #D1D5DB;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background: #EBF5FF;
+            }
+        """)
+        
+        # Medium type submenu
+        medium_menu = menu.addMenu("Set Medium Type")
+        
+        current_medium = getattr(self.node_model, 'medium_type', MediumType.WIRED)
+        
+        medium_options = [
+            ("Wired (Ethernet/P2P)", MediumType.WIRED),
+            ("WiFi Station", MediumType.WIFI_STATION),
+            ("WiFi Access Point", MediumType.WIFI_AP),
+            ("LTE User Equipment", MediumType.LTE_UE),
+            ("LTE eNodeB", MediumType.LTE_ENB),
+        ]
+        
+        for label, medium_type in medium_options:
+            action = medium_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(medium_type == current_medium)
+            action.setData(medium_type)
+            action.triggered.connect(lambda checked, mt=medium_type: self._set_medium_type(mt))
+        
+        menu.exec(event.screenPos())
+    
+    def _set_medium_type(self, medium_type: MediumType):
+        """Set the medium type and update appearance."""
+        self.node_model.medium_type = medium_type
+        self.update_appearance()
+        
+        # Notify scene
+        scene = self.scene()
+        if scene and isinstance(scene, TopologyScene):
+            scene.mediumTypeChanged.emit(self.node_model.id, medium_type)
     
     def paint(self, painter: QPainter, option, widget):
         """Custom paint with selection highlight."""
@@ -713,6 +848,7 @@ class TopologyScene(QGraphicsScene):
     linkAdded = pyqtSignal(object)       # LinkModel
     linkRemoved = pyqtSignal(str)        # link_id
     portSelected = pyqtSignal(object, object)  # NodeModel, PortConfig
+    mediumTypeChanged = pyqtSignal(str, object)  # node_id, new_medium_type
     
     def __init__(self, network_model: NetworkModel, parent=None):
         super().__init__(parent)

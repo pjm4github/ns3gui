@@ -62,6 +62,19 @@ class NodeRole(Enum):
 NodeType = NodeRole
 
 
+class MediumHint(Enum):
+    """
+    Hint about what network medium a node uses.
+    
+    This is inferred from the helper types used to install devices on nodes.
+    """
+    WIRED = "wired"              # Default - P2P or CSMA
+    WIFI_STATION = "wifi_sta"   # WiFi station (client)
+    WIFI_AP = "wifi_ap"         # WiFi access point
+    LTE_UE = "lte_ue"           # LTE user equipment
+    LTE_ENB = "lte_enb"         # LTE eNodeB
+
+
 @dataclass
 class ExtractedNode:
     """
@@ -75,11 +88,13 @@ class ExtractedNode:
         container_name: Name of the NodeContainer (e.g., "nodes", "servers")
         index: Index within the container
         node_type: Inferred role (HOST, ROUTER, etc.)
+        medium_hint: Network medium type (WIRED, WIFI_STATION, etc.)
         inferred_role: More specific role description (e.g., "server", "client")
     """
     container_name: str
     index: int
     node_type: NodeRole = NodeRole.HOST
+    medium_hint: MediumHint = MediumHint.WIRED
     inferred_role: str = ""  # e.g., "server", "client", "gateway"
     
     @property
@@ -117,6 +132,7 @@ class ExtractedLink:
     data_rate: str = ""
     delay: str = ""
     device_container: str = ""  # Name of NetDeviceContainer
+    helper_name: str = ""  # Name of helper variable used
     
     @property
     def source_key(self) -> Tuple[str, int]:
@@ -138,14 +154,18 @@ class ExtractedIPAssignment:
 @dataclass
 class ExtractedApplication:
     """Application/traffic configuration extracted from script."""
-    app_type: str  # "UdpEcho", "OnOff", "PacketSink", etc.
+    app_type: str  # "UdpEcho", "OnOff", "PacketSink", "BulkSend", etc.
     node_container: str
     node_index: int
-    port: int = 0
+    port: int = 9
     is_server: bool = False
-    remote_address: str = ""
+    remote_address: str = ""     # Destination IP address
+    protocol: str = "UDP"        # UDP or TCP
+    data_rate: str = ""          # e.g., "500kb/s"
+    packet_size: int = 0         # bytes
     start_time: float = 0.0
     stop_time: float = 0.0
+    helper_var: str = ""         # Variable name of helper (for tracking)
 
 
 @dataclass
@@ -205,6 +225,7 @@ class NS3PythonVisitor(ast.NodeVisitor):
         self.variables: Dict[str, Any] = {}  # Track variable assignments
         self.current_helper: Optional[str] = None  # Track current helper being configured
         self.helper_types: Dict[str, str] = {}  # variable name -> helper type
+        self.app_helpers: Dict[str, Dict[str, Any]] = {}  # app helper var -> {config}
         
     def visit_Assign(self, node: ast.Assign):
         """Track variable assignments to understand context."""
@@ -233,12 +254,38 @@ class NS3PythonVisitor(ast.NodeVisitor):
                 
             elif self._is_ns3_call(node.value, "InternetStackHelper"):
                 self.helper_types[var_name] = "InternetStackHelper"
+            
+            # Track application helpers
+            elif self._is_ns3_call(node.value, "OnOffHelper"):
+                self.helper_types[var_name] = "OnOffHelper"
+                self._parse_onoff_helper(var_name, node.value)
+                
+            elif self._is_ns3_call(node.value, "PacketSinkHelper"):
+                self.helper_types[var_name] = "PacketSinkHelper"
+                self._parse_packet_sink_helper(var_name, node.value)
+                
+            elif self._is_ns3_call(node.value, "UdpEchoServerHelper"):
+                self.helper_types[var_name] = "UdpEchoServerHelper"
+                self._parse_udp_echo_server_helper(var_name, node.value)
+                
+            elif self._is_ns3_call(node.value, "UdpEchoClientHelper"):
+                self.helper_types[var_name] = "UdpEchoClientHelper"
+                self._parse_udp_echo_client_helper(var_name, node.value)
+                
+            elif self._is_ns3_call(node.value, "BulkSendHelper"):
+                self.helper_types[var_name] = "BulkSendHelper"
+                self._parse_bulk_send_helper(var_name, node.value)
                 
             # Track Install() results (NetDeviceContainer)
             elif isinstance(node.value, ast.Call):
                 call_name = self._get_method_name(node.value)
                 if call_name == "Install":
-                    self.helper_types[var_name] = "NetDeviceContainer"
+                    obj_name = self._get_object_name(node.value)
+                    # Check if this is an application install
+                    if obj_name and obj_name in self.app_helpers:
+                        self._handle_app_install(obj_name, var_name, node.value)
+                    else:
+                        self.helper_types[var_name] = "NetDeviceContainer"
                     
         self.generic_visit(node)
     
@@ -247,6 +294,146 @@ class NS3PythonVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Call):
             self._process_call(node.value)
         self.generic_visit(node)
+    
+    def visit_For(self, node: ast.For):
+        """
+        Visit for loops to extract topology from loop bodies.
+        
+        Handles patterns like:
+            for i in range(4):
+                container = ns.NodeContainer()
+                container.Add(terminals.Get(i))
+                container.Add(csmaSwitch)
+                link = csma.Install(container)
+        """
+        # Try to determine loop range
+        loop_count = self._get_loop_range(node)
+        loop_var = node.target.id if isinstance(node.target, ast.Name) else None
+        
+        if loop_count is not None and loop_var:
+            # Process the loop body for each iteration conceptually
+            # We'll analyze the body to understand the pattern
+            self._process_loop_body(node.body, loop_var, loop_count)
+        
+        # Still do generic visit to catch other patterns
+        self.generic_visit(node)
+    
+    def _get_loop_range(self, node: ast.For) -> Optional[int]:
+        """Extract the range count from a for loop."""
+        # for i in range(n):
+        if isinstance(node.iter, ast.Call):
+            if isinstance(node.iter.func, ast.Name) and node.iter.func.id == "range":
+                if node.iter.args:
+                    return self._get_int_value(node.iter.args[0])
+        return None
+    
+    def _process_loop_body(self, body: list, loop_var: str, loop_count: int):
+        """
+        Process a for loop body to extract topology patterns.
+        
+        Recognizes patterns like building temporary containers and installing links.
+        """
+        # Track what's happening in the loop
+        temp_container_var = None
+        source_container = None
+        target_container = None
+        helper_var = None
+        
+        for stmt in body:
+            # Look for: container = ns.NodeContainer()
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                if isinstance(stmt.targets[0], ast.Name):
+                    var_name = stmt.targets[0].id
+                    if self._is_ns3_call(stmt.value, "NodeContainer"):
+                        temp_container_var = var_name
+                    
+                    # Look for: link = helper.Install(container)
+                    elif isinstance(stmt.value, ast.Call):
+                        method_name = self._get_method_name(stmt.value)
+                        if method_name == "Install":
+                            helper_var = self._get_object_name(stmt.value)
+            
+            # Look for: container.Add(source.Get(i)) or container.Add(target)
+            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                method_name = self._get_method_name(stmt.value)
+                obj_name = self._get_object_name(stmt.value)
+                
+                if method_name == "Add" and obj_name == temp_container_var:
+                    # Analyze what's being added
+                    if stmt.value.args:
+                        arg = stmt.value.args[0]
+                        added_container = self._extract_container_from_get(arg)
+                        if added_container:
+                            if source_container is None:
+                                source_container = added_container
+                            else:
+                                target_container = added_container
+        
+        # If we found a valid pattern, create the links
+        if source_container and target_container and helper_var:
+            self._create_loop_links(
+                source_container, target_container, 
+                helper_var, loop_var, loop_count
+            )
+    
+    def _extract_container_from_get(self, node: ast.AST) -> Optional[str]:
+        """Extract container name from expressions like 'terminals.Get(i)' or 'csmaSwitch'."""
+        # Handle: container.Get(i)
+        if isinstance(node, ast.Call):
+            method_name = self._get_method_name(node)
+            if method_name == "Get":
+                return self._get_object_name(node)
+        # Handle: just a variable name (container itself)
+        elif isinstance(node, ast.Name):
+            return node.id
+        # Handle: ns.NodeContainer reference
+        elif isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+    
+    def _create_loop_links(self, source_container: str, target_container: str,
+                           helper_var: str, loop_var: str, loop_count: int):
+        """Create links based on loop analysis."""
+        # Determine link type from helper
+        helper_type = self.helper_types.get(helper_var, "")
+        if "Csma" in helper_type:
+            link_type = ChannelMedium.CSMA
+        elif "PointToPoint" in helper_type:
+            link_type = ChannelMedium.POINT_TO_POINT
+        else:
+            link_type = ChannelMedium.UNKNOWN
+        
+        # Get node counts
+        source_count = self.topology.node_containers.get(source_container, 0)
+        target_count = self.topology.node_containers.get(target_container, 0)
+        
+        # Track existing links to avoid duplicates
+        existing_links = set()
+        for link in self.topology.links:
+            existing_links.add((link.source_container, link.source_index, 
+                               link.target_container, link.target_index))
+        
+        # Create links from each source node to the target
+        # Pattern: for i in range(n): connect source[i] to target
+        for i in range(min(loop_count, source_count)):
+            # Target is usually a single node (like a switch)
+            target_idx = 0 if target_count == 1 else (i % target_count)
+            
+            # Check for duplicate
+            link_key = (source_container, i, target_container, target_idx)
+            if link_key in existing_links:
+                continue
+            
+            link = ExtractedLink(
+                source_container=source_container,
+                source_index=i,
+                target_container=target_container,
+                target_index=target_idx,
+                link_type=link_type,
+                helper_name=helper_var,
+            )
+            
+            self.topology.links.append(link)
     
     def visit_Call(self, node: ast.Call):
         """Visit all function/method calls."""
@@ -283,21 +470,41 @@ class NS3PythonVisitor(ast.NodeVisitor):
             
         # Simulator.Stop(...)
         elif method_name == "Stop":
-            self._handle_simulator_stop(node)
+            # Check if this is Simulator.Stop or app.Stop
+            if obj_name and obj_name in ["Simulator", "ns"]:
+                self._handle_simulator_stop(node)
+            elif obj_name:
+                self._handle_app_stop(obj_name, node)
+                
+        # app.Start(...)
+        elif method_name == "Start" and obj_name:
+            self._handle_app_start(obj_name, node)
             
-        # Application helpers
-        elif method_name in ("SetAttribute",) and obj_name:
+        # Application helpers - SetAttribute, SetConstantRate
+        elif method_name in ("SetAttribute", "SetConstantRate") and obj_name:
             self._handle_app_attribute(obj_name, node)
     
     def _handle_create(self, container_name: str, node: ast.Call):
         """Handle NodeContainer.Create(n) call."""
         if not node.args:
             return
-            
+        
+        # Try to get the count
         count = self._get_int_value(node.args[0])
+        
+        # Infer medium type from container name
+        medium_hint = self._infer_medium_from_name(container_name)
+        
+        # Infer node type from container name
+        node_type = self._infer_node_type_from_name(container_name)
+        
         if count is None:
-            self.topology.add_warning(f"Could not determine node count for {container_name}.Create()")
-            return
+            # Use default count and record as TODO
+            default_count = 3
+            self.topology.add_warning(
+                f"Could not determine node count for {container_name}.Create(), using default={default_count}"
+            )
+            count = default_count
             
         self.topology.node_containers[container_name] = count
         
@@ -306,9 +513,61 @@ class NS3PythonVisitor(ast.NodeVisitor):
             ext_node = ExtractedNode(
                 container_name=container_name,
                 index=i,
-                node_type=NodeType.HOST,
+                node_type=node_type,
+                medium_hint=medium_hint,
             )
             self.topology.nodes.append(ext_node)
+    
+    def _infer_node_type_from_name(self, container_name: str) -> NodeRole:
+        """Infer node type/role from container variable name."""
+        name_lower = container_name.lower()
+        
+        # Switch patterns
+        if "switch" in name_lower:
+            return NodeRole.SWITCH
+        if "bridge" in name_lower:
+            return NodeRole.SWITCH
+        if "hub" in name_lower:
+            return NodeRole.SWITCH
+            
+        # Router patterns
+        if "router" in name_lower:
+            return NodeRole.ROUTER
+        if "gateway" in name_lower:
+            return NodeRole.ROUTER
+            
+        # Access point patterns
+        if "ap" in name_lower and ("wifi" in name_lower or "wlan" in name_lower):
+            return NodeRole.ACCESS_POINT
+        if "accesspoint" in name_lower:
+            return NodeRole.ACCESS_POINT
+            
+        # Default to HOST
+        return NodeRole.HOST
+    
+    def _infer_medium_from_name(self, container_name: str) -> MediumHint:
+        """Infer network medium type from container variable name."""
+        name_lower = container_name.lower()
+        
+        # WiFi patterns
+        if "wifista" in name_lower or "wifi_sta" in name_lower or "stanode" in name_lower:
+            return MediumHint.WIFI_STATION
+        if "wifiap" in name_lower or "wifi_ap" in name_lower or "apnode" in name_lower:
+            return MediumHint.WIFI_AP
+        if "wifi" in name_lower:
+            # Generic wifi - assume station
+            return MediumHint.WIFI_STATION
+            
+        # LTE patterns
+        if "ue" in name_lower and "lte" in name_lower:
+            return MediumHint.LTE_UE
+        if "enb" in name_lower or "enodeb" in name_lower:
+            return MediumHint.LTE_ENB
+        if "lte" in name_lower:
+            return MediumHint.LTE_UE  # Default to UE
+            
+        # Default to wired
+        return MediumHint.WIRED
     
     def _handle_install(self, helper_name: str, node: ast.Call):
         """Handle Helper.Install(...) call to extract links."""
@@ -318,6 +577,8 @@ class NS3PythonVisitor(ast.NodeVisitor):
             self._handle_p2p_install(helper_name, node)
         elif helper_type == "CsmaHelper":
             self._handle_csma_install(helper_name, node)
+        elif helper_type == "WifiHelper":
+            self._handle_wifi_install(helper_name, node)
         elif helper_type == "InternetStackHelper":
             # Internet stack install - just note it
             pass
@@ -328,6 +589,8 @@ class NS3PythonVisitor(ast.NodeVisitor):
                 self._handle_p2p_install(helper_name, node)
             elif "csma" in helper_lower:
                 self._handle_csma_install(helper_name, node)
+            elif "wifi" in helper_lower:
+                self._handle_wifi_install(helper_name, node)
             elif len(node.args) == 2:
                 # Two args usually means P2P between two nodes
                 self._handle_p2p_install(helper_name, node)
@@ -448,6 +711,59 @@ class NS3PythonVisitor(ast.NodeVisitor):
                 )
                 self.topology.links.append(link)
     
+    def _handle_wifi_install(self, helper_name: str, node: ast.Call):
+        """
+        Handle WifiHelper.Install(phy, mac, nodes).
+        
+        WiFi install typically has 3 args: (phy, mac, nodes)
+        This updates nodes' medium_hint to WIFI_STATION or WIFI_AP
+        and creates WiFi links.
+        """
+        # WiFi install typically: wifi.Install(phy, mac, nodes)
+        # Get the last argument which should be the node container
+        if not node.args:
+            return
+            
+        # Last argument is usually the node container
+        nodes_arg = node.args[-1]
+        container_ref = self._parse_node_container_reference(nodes_arg)
+        
+        if not container_ref:
+            return
+            
+        container_name, start_idx, end_idx = container_ref
+        count = self.topology.node_containers.get(container_name, 0)
+        
+        if start_idx is None:
+            start_idx = 0
+        if end_idx is None:
+            end_idx = count - 1
+            
+        # Determine if these are stations or APs based on name hints
+        medium_hint = self._infer_medium_from_name(container_name)
+        if medium_hint == MediumHint.WIRED:
+            # Default to station if no hint from name
+            medium_hint = MediumHint.WIFI_STATION
+            
+        # Update medium_hint for all nodes in this container
+        for ext_node in self.topology.nodes:
+            if ext_node.container_name == container_name:
+                if start_idx <= ext_node.index <= end_idx:
+                    ext_node.medium_hint = medium_hint
+        
+        # Create WiFi links between nodes (simplified - all connect to each other)
+        # In reality, WiFi stations connect to AP, but we represent as WIFI medium
+        if count >= 2:
+            for i in range(start_idx, end_idx):
+                link = ExtractedLink(
+                    source_container=container_name,
+                    source_index=i,
+                    target_container=container_name,
+                    target_index=i + 1,
+                    link_type=LinkType.WIFI,
+                )
+                self.topology.links.append(link)
+    
     def _handle_set_attribute(self, helper_name: str, method: str, node: ast.Call):
         """Handle SetDeviceAttribute/SetChannelAttribute."""
         if len(node.args) < 2:
@@ -499,10 +815,310 @@ class NS3PythonVisitor(ast.NodeVisitor):
             if duration:
                 self.topology.duration = duration
     
+    def _handle_app_start(self, var_name: str, node: ast.Call):
+        """
+        Handle app.Start(ns.Seconds(n)) calls.
+        
+        Updates the most recently created application's start time.
+        """
+        if not node.args:
+            return
+            
+        start_time = self._extract_time_value(node.args[0])
+        if start_time is None:
+            return
+        
+        # Update the most recent application if it matches
+        if self.topology.applications:
+            # Find the app that was most recently installed
+            # Usually the variable 'app' is reused
+            self.topology.applications[-1].start_time = start_time
+    
+    def _handle_app_stop(self, var_name: str, node: ast.Call):
+        """
+        Handle app.Stop(ns.Seconds(n)) calls.
+        
+        Updates the most recently created application's stop time.
+        """
+        if not node.args:
+            return
+            
+        stop_time = self._extract_time_value(node.args[0])
+        if stop_time is None:
+            return
+        
+        # Update the most recent application
+        if self.topology.applications:
+            self.topology.applications[-1].stop_time = stop_time
+    
     def _handle_app_attribute(self, helper_name: str, node: ast.Call):
-        """Handle application helper attributes."""
-        # TODO: Extract application configurations
-        pass
+        """Handle application helper SetAttribute/SetConstantRate calls."""
+        if helper_name not in self.app_helpers:
+            return
+            
+        method_name = self._get_method_name(node)
+        
+        if method_name == "SetConstantRate" and node.args:
+            # onoff.SetConstantRate(ns.DataRate("500kb/s"))
+            rate = self._extract_data_rate(node.args[0])
+            if rate:
+                self.app_helpers[helper_name]["data_rate"] = rate
+                
+        elif method_name == "SetAttribute" and len(node.args) >= 2:
+            # helper.SetAttribute("Remote", ns.AddressValue(...))
+            attr_name = self._get_string_value(node.args[0])
+            if attr_name == "Remote":
+                addr = self._extract_address_from_arg(node.args[1])
+                if addr:
+                    self.app_helpers[helper_name]["remote_address"] = addr
+            elif attr_name == "DataRate":
+                rate = self._extract_data_rate(node.args[1])
+                if rate:
+                    self.app_helpers[helper_name]["data_rate"] = rate
+            elif attr_name == "PacketSize":
+                size = self._get_int_value(node.args[1])
+                if size:
+                    self.app_helpers[helper_name]["packet_size"] = size
+    
+    def _parse_onoff_helper(self, var_name: str, node: ast.Call):
+        """
+        Parse OnOffHelper constructor.
+        
+        Pattern: ns.OnOffHelper("ns3::UdpSocketFactory", ns.InetSocketAddress(...).ConvertTo())
+        """
+        config = {
+            "type": "OnOff",
+            "protocol": "UDP",
+            "remote_address": "",
+            "port": 9,
+            "data_rate": "500kb/s",
+        }
+        
+        if len(node.args) >= 1:
+            # First arg is socket factory
+            factory = self._get_string_value(node.args[0])
+            if factory and "Tcp" in factory:
+                config["protocol"] = "TCP"
+        
+        if len(node.args) >= 2:
+            # Second arg is address
+            addr_info = self._extract_inet_socket_address(node.args[1])
+            if addr_info:
+                config["remote_address"] = addr_info.get("address", "")
+                config["port"] = addr_info.get("port", 9)
+        
+        self.app_helpers[var_name] = config
+    
+    def _parse_packet_sink_helper(self, var_name: str, node: ast.Call):
+        """
+        Parse PacketSinkHelper constructor.
+        
+        Pattern: ns.PacketSinkHelper("ns3::UdpSocketFactory", ns.InetSocketAddress(...).ConvertTo())
+        """
+        config = {
+            "type": "PacketSink",
+            "protocol": "UDP",
+            "port": 9,
+        }
+        
+        if len(node.args) >= 1:
+            factory = self._get_string_value(node.args[0])
+            if factory and "Tcp" in factory:
+                config["protocol"] = "TCP"
+        
+        if len(node.args) >= 2:
+            addr_info = self._extract_inet_socket_address(node.args[1])
+            if addr_info:
+                config["port"] = addr_info.get("port", 9)
+        
+        self.app_helpers[var_name] = config
+    
+    def _parse_udp_echo_server_helper(self, var_name: str, node: ast.Call):
+        """Parse UdpEchoServerHelper constructor."""
+        config = {
+            "type": "UdpEchoServer",
+            "protocol": "UDP",
+            "port": 9,
+        }
+        
+        if node.args:
+            port = self._get_int_value(node.args[0])
+            if port:
+                config["port"] = port
+        
+        self.app_helpers[var_name] = config
+    
+    def _parse_udp_echo_client_helper(self, var_name: str, node: ast.Call):
+        """Parse UdpEchoClientHelper constructor."""
+        config = {
+            "type": "UdpEchoClient",
+            "protocol": "UDP",
+            "remote_address": "",
+            "port": 9,
+        }
+        
+        if len(node.args) >= 1:
+            # First arg is address
+            addr = self._extract_address_from_arg(node.args[0])
+            if addr:
+                config["remote_address"] = addr
+        
+        if len(node.args) >= 2:
+            port = self._get_int_value(node.args[1])
+            if port:
+                config["port"] = port
+        
+        self.app_helpers[var_name] = config
+    
+    def _parse_bulk_send_helper(self, var_name: str, node: ast.Call):
+        """Parse BulkSendHelper constructor."""
+        config = {
+            "type": "BulkSend",
+            "protocol": "TCP",
+            "remote_address": "",
+            "port": 9,
+        }
+        
+        if len(node.args) >= 2:
+            addr_info = self._extract_inet_socket_address(node.args[1])
+            if addr_info:
+                config["remote_address"] = addr_info.get("address", "")
+                config["port"] = addr_info.get("port", 9)
+        
+        self.app_helpers[var_name] = config
+    
+    def _handle_app_install(self, helper_name: str, result_var: str, node: ast.Call):
+        """
+        Handle application Install call.
+        
+        Pattern: app = helper.Install(nodes.Get(0)) or helper.Install(nodes)
+        """
+        if helper_name not in self.app_helpers:
+            return
+            
+        config = self.app_helpers[helper_name]
+        
+        # Get the node(s) being installed on
+        if node.args:
+            node_info = self._extract_node_reference(node.args[0])
+            if node_info:
+                container, index = node_info
+                
+                app = ExtractedApplication(
+                    app_type=config.get("type", "Unknown"),
+                    node_container=container,
+                    node_index=index,
+                    port=config.get("port", 9),
+                    is_server=config.get("type") in ("PacketSink", "UdpEchoServer"),
+                    remote_address=config.get("remote_address", ""),
+                    protocol=config.get("protocol", "UDP"),
+                    data_rate=config.get("data_rate", ""),
+                    packet_size=config.get("packet_size", 0),
+                    helper_var=helper_name,
+                )
+                
+                self.topology.applications.append(app)
+                
+                # Track the result variable for Start/Stop calls
+                self._pending_app_container = result_var
+                self._pending_app_index = len(self.topology.applications) - 1
+    
+    def _extract_inet_socket_address(self, node: ast.AST) -> Optional[Dict[str, Any]]:
+        """
+        Extract address and port from InetSocketAddress call.
+        
+        Patterns:
+        - ns.InetSocketAddress(ns.Ipv4Address("10.1.1.2"), port).ConvertTo()
+        - ns.InetSocketAddress(ns.Ipv4Address.GetAny(), port).ConvertTo()
+        """
+        # Handle .ConvertTo() wrapper
+        if isinstance(node, ast.Call):
+            method = self._get_method_name(node)
+            if method == "ConvertTo":
+                # Get the inner call
+                if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
+                    node = node.func.value
+        
+        if not isinstance(node, ast.Call):
+            return None
+            
+        # Check if it's InetSocketAddress
+        if not self._is_ns3_call(node, "InetSocketAddress"):
+            return None
+        
+        result = {"address": "", "port": 9}
+        
+        if len(node.args) >= 1:
+            # First arg is address
+            result["address"] = self._extract_address_from_arg(node.args[0])
+        
+        if len(node.args) >= 2:
+            # Second arg is port
+            port = self._get_int_value(node.args[1])
+            if port:
+                result["port"] = port
+        
+        return result
+    
+    def _extract_address_from_arg(self, node: ast.AST) -> str:
+        """Extract IP address from various patterns."""
+        if isinstance(node, ast.Call):
+            method = self._get_method_name(node)
+            
+            # ns.Ipv4Address("10.1.1.2")
+            if self._is_ns3_call(node, "Ipv4Address"):
+                if node.args:
+                    return self._get_string_value(node.args[0]) or ""
+            
+            # ns.Ipv4Address.GetAny()
+            if method == "GetAny":
+                return "0.0.0.0"
+            
+            # ns.AddressValue(...)
+            if self._is_ns3_call(node, "AddressValue"):
+                if node.args:
+                    return self._extract_address_from_arg(node.args[0])
+            
+            # InetSocketAddress - extract just the address part
+            addr_info = self._extract_inet_socket_address(node)
+            if addr_info:
+                return addr_info.get("address", "")
+        
+        return ""
+    
+    def _extract_data_rate(self, node: ast.AST) -> str:
+        """Extract data rate from DataRate call or DataRateValue."""
+        if isinstance(node, ast.Call):
+            # ns.DataRate("500kb/s") or ns.DataRateValue(...)
+            if node.args:
+                arg = node.args[0]
+                if isinstance(arg, ast.Constant):
+                    return str(arg.value)
+                elif isinstance(arg, ast.Call):
+                    return self._extract_data_rate(arg)
+        return ""
+    
+    def _extract_node_reference(self, node: ast.AST) -> Optional[Tuple[str, int]]:
+        """
+        Extract node container and index from node reference.
+        
+        Patterns:
+        - nodes.Get(0)
+        - nodes (whole container, assume index 0)
+        """
+        if isinstance(node, ast.Call):
+            method = self._get_method_name(node)
+            if method == "Get":
+                obj = self._get_object_name(node)
+                if obj and node.args:
+                    idx = self._get_int_value(node.args[0])
+                    if idx is not None:
+                        return (obj, idx)
+        elif isinstance(node, ast.Name):
+            # Whole container reference
+            return (node.id, 0)
+        
+        return None
     
     # =========================================================================
     # Helper methods for parsing AST nodes
@@ -834,10 +1450,16 @@ class NS3PythonParser:
             connection_count[link.source_key] = connection_count.get(link.source_key, 0) + 1
             connection_count[link.target_key] = connection_count.get(link.target_key, 0) + 1
         
-        # Nodes with many connections might be routers
+        # Nodes with many connections might be routers (unless already explicitly typed)
         for node in topology.nodes:
             count = connection_count.get(node.key, 0)
-            if count > 2:
+            
+            # Don't override explicit switch type (from name inference)
+            if node.node_type == NodeType.SWITCH:
+                continue
+                
+            if count > 2 and node.node_type == NodeType.HOST:
+                # Only upgrade HOST to ROUTER, don't change SWITCH
                 node.node_type = NodeType.ROUTER
             elif count == 0:
                 node.node_type = NodeType.HOST

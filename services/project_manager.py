@@ -187,6 +187,7 @@ class ProjectManager:
             "id": node.id,
             "name": node.name,
             "type": node.node_type.name.lower(),
+            "medium": node.medium_type.name.lower(),  # Network medium type
             "description": node.description,
             "position": {
                 "x": node.position.x,
@@ -376,6 +377,8 @@ class ProjectManager:
     
     def _deserialize_node(self, data: dict) -> NodeModel:
         """Convert dictionary to NodeModel."""
+        from models import MediumType
+        
         # Parse node type
         type_str = data.get("type", "host").upper()
         try:
@@ -383,11 +386,19 @@ class ProjectManager:
         except KeyError:
             node_type = NodeType.HOST
         
+        # Parse medium type
+        medium_str = data.get("medium", "wired").upper()
+        try:
+            medium_type = MediumType[medium_str]
+        except KeyError:
+            medium_type = MediumType.WIRED
+        
         # Create node with basic properties
         # Note: __post_init__ will create default ports, we'll replace them if data has ports
         node = NodeModel(
             id=data.get("id", ""),
             node_type=node_type,
+            medium_type=medium_type,
             name=data.get("name", ""),
             description=data.get("description", ""),
             position=Position(

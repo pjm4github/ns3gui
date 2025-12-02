@@ -14,6 +14,7 @@ from .stats_panel import StatsPanel
 from .playback_controls import PlaybackControls
 from .settings_dialog import SettingsDialog
 from .ns3_import_dialog import NS3ImportDialog, NS3BatchImportDialog
+from .code_preview_dialog import CodePreviewDialog
 from .main_window import MainWindow
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "SettingsDialog",
     "NS3ImportDialog",
     "NS3BatchImportDialog",
+    "CodePreviewDialog",
     "MainWindow",
 ]

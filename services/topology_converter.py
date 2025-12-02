@@ -19,13 +19,16 @@ from typing import Dict, List, Optional, Tuple
 
 from models.network import (
     NetworkModel, NodeModel, LinkModel, PortConfig, Position,
-    NodeType, PortType, ChannelType, RouteEntry, RoutingMode
+    NodeType, MediumType, PortType, ChannelType, RouteEntry, RoutingMode
 )
-from models.simulation import SimulationConfig, TrafficFlow
+from models.simulation import (
+    SimulationConfig, TrafficFlow, TrafficApplication, TrafficProtocol
+)
 from services.ns3_script_parser import (
-    ExtractedTopology, ExtractedNode, ExtractedLink,
+    ExtractedTopology, ExtractedNode, ExtractedLink, ExtractedApplication,
     ChannelMedium as ExtractedChannelMedium, 
     NodeRole as ExtractedNodeRole,
+    MediumHint,
     # Aliases for backward compatibility
     LinkType as ExtractedLinkType, 
     NodeType as ExtractedNodeType
@@ -102,22 +105,29 @@ class TopologyConverter:
         # Map from (container, index) to node ID
         node_map: Dict[Tuple[str, int], str] = {}
         
-        # First pass: identify CSMA segments that need switches
+        # First pass: identify CSMA segments and any existing switches that act as hubs
         csma_segments = self._identify_csma_segments(extracted)
         
-        # Create virtual switch nodes to represent CSMA shared medium segments
-        # (Visual representation - actual ns-3 uses true CSMA channel)
-        for segment_key, node_keys in csma_segments.items():
-            if len(node_keys) > 2:  # Only create switch for 3+ nodes
-                switch = self._create_csma_switch_node(segment_key, len(network.nodes))
-                network.nodes[switch.id] = switch
-                self.csma_switch_nodes[segment_key] = switch.id
-        
-        # Create regular nodes
+        # Create regular nodes first (so we can reference switch nodes)
         for ext_node in extracted.nodes:
             node = self._create_node(ext_node, len(network.nodes))
             network.nodes[node.id] = node
             node_map[ext_node.key] = node.id
+        
+        # Now register existing switches as CSMA hubs, or create virtual ones
+        for segment_key, node_keys in csma_segments.items():
+            # Check if this segment has an existing switch as hub
+            if hasattr(self, '_csma_hub_switches') and segment_key in self._csma_hub_switches:
+                switch_key = self._csma_hub_switches[segment_key]
+                if switch_key in node_map:
+                    self.csma_switch_nodes[segment_key] = node_map[switch_key]
+                    continue
+            
+            # No existing switch - create a virtual one if needed
+            if len(node_keys) > 2:  # Only create switch for 3+ nodes
+                switch = self._create_csma_switch_node(segment_key, len(network.nodes))
+                network.nodes[switch.id] = switch
+                self.csma_switch_nodes[segment_key] = switch.id
         
         # Apply layout
         self._apply_layout(network, extracted)
@@ -136,40 +146,52 @@ class TopologyConverter:
         # Apply IP addresses
         self._apply_ip_addresses(network, extracted, node_map)
         
-        # Record unhandled applications as todos
-        for app in extracted.applications:
-            network.todos.append({
-                "type": "unhandled_application",
-                "app_type": app.app_type,
-                "message": f"Application '{app.app_type}' was detected but not converted",
-                "details": {
-                    "node_container": app.node_container,
-                    "node_index": app.node_index,
-                    "port": app.port,
-                }
-            })
+        # Convert applications to traffic flows
+        traffic_flows = self._convert_applications_to_flows(extracted, node_map)
         
-        return network
+        return network, traffic_flows
     
     def _identify_csma_segments(self, extracted: ExtractedTopology) -> Dict[str, List[Tuple[str, int]]]:
         """
         Identify CSMA segments (groups of nodes on shared medium).
         
+        If links connect to an existing SWITCH node, that switch becomes the hub.
+        Otherwise, we'll create a virtual hub later.
+        
         Returns dict mapping segment identifier to list of node keys.
         """
         segments: Dict[str, List[Tuple[str, int]]] = {}
         
+        # Track which switch nodes are used as CSMA hubs
+        self._csma_hub_switches: Dict[str, Tuple[str, int]] = {}  # segment_key -> switch node key
+        
         for link in extracted.links:
             if link.link_type == ExtractedLinkType.CSMA:
-                # Use container name as segment key
-                segment_key = f"csma_{link.source_container}"
+                # Check if either endpoint is a switch
+                source_node = extracted.get_node(link.source_container, link.source_index)
+                target_node = extracted.get_node(link.target_container, link.target_index)
+                
+                source_is_switch = source_node and source_node.node_type == ExtractedNodeRole.SWITCH
+                target_is_switch = target_node and target_node.node_type == ExtractedNodeRole.SWITCH
+                
+                # Determine segment key - use the switch's container if one exists
+                if target_is_switch:
+                    segment_key = f"csma_{link.target_container}"
+                    self._csma_hub_switches[segment_key] = link.target_key
+                elif source_is_switch:
+                    segment_key = f"csma_{link.source_container}"
+                    self._csma_hub_switches[segment_key] = link.source_key
+                else:
+                    # No switch involved, use source container
+                    segment_key = f"csma_{link.source_container}"
                 
                 if segment_key not in segments:
                     segments[segment_key] = []
                 
-                if link.source_key not in segments[segment_key]:
+                # Add non-switch nodes to the segment
+                if not source_is_switch and link.source_key not in segments[segment_key]:
                     segments[segment_key].append(link.source_key)
-                if link.target_key not in segments[segment_key]:
+                if not target_is_switch and link.target_key not in segments[segment_key]:
                     segments[segment_key].append(link.target_key)
         
         return segments
@@ -183,6 +205,7 @@ class TopologyConverter:
         not through a switch. The switch visualization helps users understand
         which nodes share bandwidth on the same collision domain.
         """
+        # NodeModel.__post_init__ will create default 8 ports for SWITCH type
         node = NodeModel(
             id=generate_id(),
             name=f"csma_hub_{segment_key}",
@@ -190,22 +213,15 @@ class TopologyConverter:
             description=f"Virtual hub representing CSMA shared medium '{segment_key}' (not a real ns-3 node)",
         )
         
-        # Add multiple ports for CSMA connections
-        for i in range(8):  # Default 8 ports
-            port = PortConfig(
-                id=generate_id(),
-                port_number=i,
-                port_name=f"gi{i}",
-                port_type=PortType.GIGABIT_ETHERNET,
-            )
-            node.ports.append(port)
-        
         return node
     
     def _create_node(self, ext_node: ExtractedNode, index: int) -> NodeModel:
         """Create a NodeModel from ExtractedNode."""
         # Map extracted node type to GUI node type
         node_type = self._map_node_type(ext_node.node_type)
+        
+        # Map medium hint to medium type
+        medium_type = self._map_medium_type(ext_node.medium_hint)
         
         # Generate name
         name = f"{ext_node.container_name}_{ext_node.index}"
@@ -215,6 +231,7 @@ class TopologyConverter:
             id=generate_id(),
             name=name,
             node_type=node_type,
+            medium_type=medium_type,
             description=f"From container '{ext_node.container_name}' index {ext_node.index}",
         )
         
@@ -230,6 +247,17 @@ class TopologyConverter:
             ExtractedNodeType.UNKNOWN: NodeType.HOST,
         }
         return mapping.get(ext_type, NodeType.HOST)
+    
+    def _map_medium_type(self, hint: MediumHint) -> MediumType:
+        """Map parser's MediumHint to model's MediumType."""
+        mapping = {
+            MediumHint.WIRED: MediumType.WIRED,
+            MediumHint.WIFI_STATION: MediumType.WIFI_STATION,
+            MediumHint.WIFI_AP: MediumType.WIFI_AP,
+            MediumHint.LTE_UE: MediumType.LTE_UE,
+            MediumHint.LTE_ENB: MediumType.LTE_ENB,
+        }
+        return mapping.get(hint, MediumType.WIRED)
     
     def _create_link(
         self, 
@@ -289,60 +317,118 @@ class TopologyConverter:
         """
         Create links for CSMA shared medium segment.
         
-        If 3+ nodes are on the segment, connects them through a virtual switch.
+        If an existing switch node is the hub, connects hosts to it.
+        If 3+ nodes are on the segment without a switch, connects them through a virtual switch.
         Otherwise creates direct CSMA links between nodes.
         """
-        segment_key = f"csma_{ext_link.source_container}"
+        # Determine the segment key - check both source and target
+        # If one is a switch, use its container name
+        source_id = node_map.get(ext_link.source_key)
+        target_id = node_map.get(ext_link.target_key)
+        
+        source_node = network.nodes.get(source_id) if source_id else None
+        target_node = network.nodes.get(target_id) if target_id else None
+        
+        source_is_switch = source_node and source_node.node_type == NodeType.SWITCH
+        target_is_switch = target_node and target_node.node_type == NodeType.SWITCH
+        
+        # Determine the segment key based on which end is the switch
+        if target_is_switch:
+            segment_key = f"csma_{ext_link.target_container}"
+        elif source_is_switch:
+            segment_key = f"csma_{ext_link.source_container}"
+        else:
+            segment_key = f"csma_{ext_link.source_container}"
+        
         switch_id = self.csma_switch_nodes.get(segment_key)
         
         if switch_id:
-            # Connect nodes to switch instead of each other
+            # Connect non-switch nodes to the switch
             switch_node = network.nodes.get(switch_id)
             if not switch_node:
                 return
             
-            for node_key in [ext_link.source_key, ext_link.target_key]:
-                node_id = node_map.get(node_key)
-                if not node_id:
-                    continue
+            # If one end is already the switch, just connect the other end
+            if source_is_switch or target_is_switch:
+                # Figure out which is the host
+                if source_is_switch:
+                    host_id = target_id
+                    host_node = target_node
+                else:
+                    host_id = source_id
+                    host_node = source_node
                 
-                node = network.nodes.get(node_id)
-                if not node:
-                    continue
+                if not host_id or not host_node:
+                    return
                 
-                # Check if already connected to this switch
-                already_connected = False
-                for existing_link in network.links.values():
-                    if (existing_link.source_node_id == node_id and 
-                        existing_link.target_node_id == switch_id):
-                        already_connected = True
-                        break
-                    if (existing_link.target_node_id == node_id and 
-                        existing_link.source_node_id == switch_id):
-                        already_connected = True
-                        break
+                # Skip if it's the switch itself
+                if host_node.node_type == NodeType.SWITCH:
+                    return
                 
-                if already_connected:
-                    continue
-                
-                # Create link to switch
-                node_port = self._find_available_port(node, network) or self._add_port(node)
-                switch_port = self._find_available_port(switch_node, network) or self._add_port(switch_node)
-                
-                link = LinkModel(
-                    id=generate_id(),
-                    source_node_id=node_id,
-                    target_node_id=switch_id,
-                    source_port_id=node_port.id,
-                    target_port_id=switch_port.id,
-                    channel_type=ChannelType.CSMA,
-                    data_rate=ext_link.data_rate or "100Mbps",
-                    delay=ext_link.delay or "1ms",
+                # Check if already connected
+                already_connected = any(
+                    (l.source_node_id == host_id and l.target_node_id == switch_id) or
+                    (l.target_node_id == host_id and l.source_node_id == switch_id)
+                    for l in network.links.values()
                 )
                 
-                node_port.connected_link_id = link.id
-                switch_port.connected_link_id = link.id
-                network.links[link.id] = link
+                if not already_connected:
+                    host_port = self._find_available_port(host_node, network) or self._add_port(host_node)
+                    switch_port = self._find_available_port(switch_node, network) or self._add_port(switch_node)
+                    
+                    link = LinkModel(
+                        id=generate_id(),
+                        source_node_id=host_id,
+                        target_node_id=switch_id,
+                        source_port_id=host_port.id,
+                        target_port_id=switch_port.id,
+                        channel_type=ChannelType.CSMA,
+                        data_rate=ext_link.data_rate or "100Mbps",
+                        delay=ext_link.delay or "1ms",
+                    )
+                    
+                    host_port.connected_link_id = link.id
+                    switch_port.connected_link_id = link.id
+                    network.links[link.id] = link
+            else:
+                # Neither end is a switch - connect both to the virtual switch
+                for node_key in [ext_link.source_key, ext_link.target_key]:
+                    node_id = node_map.get(node_key)
+                    if not node_id:
+                        continue
+                    
+                    node = network.nodes.get(node_id)
+                    if not node or node.node_type == NodeType.SWITCH:
+                        continue
+                    
+                    # Check if already connected to this switch
+                    already_connected = any(
+                        (l.source_node_id == node_id and l.target_node_id == switch_id) or
+                        (l.target_node_id == node_id and l.source_node_id == switch_id)
+                        for l in network.links.values()
+                    )
+                    
+                    if already_connected:
+                        continue
+                    
+                    # Create link to switch
+                    node_port = self._find_available_port(node, network) or self._add_port(node)
+                    switch_port = self._find_available_port(switch_node, network) or self._add_port(switch_node)
+                    
+                    link = LinkModel(
+                        id=generate_id(),
+                        source_node_id=node_id,
+                        target_node_id=switch_id,
+                        source_port_id=node_port.id,
+                        target_port_id=switch_port.id,
+                        channel_type=ChannelType.CSMA,
+                        data_rate=ext_link.data_rate or "100Mbps",
+                        delay=ext_link.delay or "1ms",
+                    )
+                    
+                    node_port.connected_link_id = link.id
+                    switch_port.connected_link_id = link.id
+                    network.links[link.id] = link
         else:
             # Direct link (small CSMA segment)
             link = self._create_link(ext_link, node_map, network)
@@ -504,6 +590,115 @@ class TopologyConverter:
                     target_port.netmask = "255.255.255.0"
                 
                 subnet_counter += 1
+    
+    def _convert_applications_to_flows(
+        self,
+        extracted: ExtractedTopology,
+        node_map: Dict[Tuple[str, int], str]
+    ) -> List[TrafficFlow]:
+        """
+        Convert extracted applications to TrafficFlow objects.
+        
+        Matches OnOff/BulkSend sources with PacketSink destinations
+        to create complete flow definitions.
+        """
+        flows: List[TrafficFlow] = []
+        
+        # Separate sources (generators) and sinks
+        sources: List[ExtractedApplication] = []
+        sinks: Dict[Tuple[str, int], ExtractedApplication] = {}  # keyed by (container, index)
+        
+        for app in extracted.applications:
+            if app.app_type in ("OnOff", "BulkSend", "UdpEchoClient"):
+                sources.append(app)
+            elif app.app_type in ("PacketSink", "UdpEchoServer"):
+                key = (app.node_container, app.node_index)
+                sinks[key] = app
+        
+        # Create flows from sources
+        for source_app in sources:
+            source_key = (source_app.node_container, source_app.node_index)
+            source_node_id = node_map.get(source_key, "")
+            
+            # Determine target node from remote_address
+            target_node_id = ""
+            if source_app.remote_address:
+                target_node_id = self._find_node_by_ip(
+                    extracted, node_map, source_app.remote_address
+                )
+            
+            # Map app type to TrafficApplication enum
+            app_type = TrafficApplication.ONOFF
+            if source_app.app_type == "BulkSend":
+                app_type = TrafficApplication.BULK_SEND
+            elif source_app.app_type == "UdpEchoClient":
+                app_type = TrafficApplication.ECHO
+            
+            # Map protocol
+            protocol = TrafficProtocol.UDP
+            if source_app.protocol == "TCP":
+                protocol = TrafficProtocol.TCP
+            
+            flow = TrafficFlow(
+                name=f"{source_app.app_type}_{source_app.node_container}_{source_app.node_index}",
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                dest_address=source_app.remote_address,
+                port=source_app.port,
+                protocol=protocol,
+                application=app_type,
+                start_time=source_app.start_time,
+                stop_time=source_app.stop_time if source_app.stop_time > 0 else 10.0,
+                data_rate=source_app.data_rate or "500kb/s",
+                packet_size=source_app.packet_size if source_app.packet_size > 0 else 1024,
+            )
+            
+            flows.append(flow)
+        
+        return flows
+    
+    def _find_node_by_ip(
+        self,
+        extracted: ExtractedTopology,
+        node_map: Dict[Tuple[str, int], str],
+        ip_address: str
+    ) -> str:
+        """
+        Find the node ID that has the given IP address.
+        
+        This is a heuristic - we look at IP assignments and try to match.
+        """
+        # Look through IP assignments
+        for assignment in extracted.ip_assignments:
+            # Parse the base address to see if ip_address falls in this range
+            base = assignment.base_address
+            
+            # Simple matching: check if the IP's first 3 octets match the base
+            if ip_address and base:
+                ip_parts = ip_address.split('.')
+                base_parts = base.split('.')
+                
+                if len(ip_parts) >= 3 and len(base_parts) >= 3:
+                    if ip_parts[:3] == base_parts[:3]:
+                        # This IP is in this subnet
+                        # Try to find the node index from last octet
+                        try:
+                            host_num = int(ip_parts[3])
+                            # In most ns-3 examples, host addresses start at .1
+                            # and correspond to node indices
+                            for key, node_id in node_map.items():
+                                container, idx = key
+                                # Check if this container is in the assignment
+                                if assignment.device_container in ["terminalDevices", "devices", container]:
+                                    # Simple heuristic: host_num - 1 = node_index
+                                    if idx == host_num - 1:
+                                        return node_id
+                        except ValueError:
+                            pass
+        
+        # Fallback: try direct matching in IP assignments
+        # This won't work for most cases but is a safety net
+        return ""
 
 
 class WorkspaceManager:
@@ -690,9 +885,10 @@ class NS3ExampleProcessor:
         
         # Convert to NetworkModel
         try:
-            network = self.converter.convert(extracted)
+            network, traffic_flows = self.converter.convert(extracted)
             result["node_count"] = len(network.nodes)
             result["link_count"] = len(network.links)
+            result["traffic_flows"] = traffic_flows
             
             # Save topology
             topology_path = self.workspace.save_topology(network, rel_path)

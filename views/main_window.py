@@ -59,6 +59,22 @@ class SimulationToolbar(QToolBar):
                 font-weight: 500;
                 font-size: 13px;
             }
+            QCheckBox {
+                color: #374151;
+                font-size: 13px;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1px solid #D1D5DB;
+                background: white;
+            }
+            QCheckBox::indicator:checked {
+                background: #3B82F6;
+                border-color: #3B82F6;
+            }
         """)
         
         # Run button
@@ -95,6 +111,14 @@ class SimulationToolbar(QToolBar):
             }
         """)
         self.addWidget(self.stop_btn)
+        
+        self.addSeparator()
+        
+        # Preview checkbox
+        from PyQt6.QtWidgets import QCheckBox
+        self.preview_check = QCheckBox("Preview Code")
+        self.preview_check.setToolTip("Preview and edit generated ns-3 script before running")
+        self.addWidget(self.preview_check)
         
         self.addSeparator()
         
@@ -178,6 +202,7 @@ class MainWindow(QMainWindow):
         # Simulation manager
         self.sim_manager = NS3SimulationManager()
         self._sim_output_dir = ""
+        self._current_project_path = ""  # Path to current project file
         
         # Load saved ns-3 path from settings
         self._load_ns3_settings()
@@ -539,11 +564,17 @@ class MainWindow(QMainWindow):
         self.canvas.topology_scene.linkAdded.connect(self._update_counts)
         self.canvas.topology_scene.linkRemoved.connect(self._update_counts)
         
+        # Scene medium type change -> property panel update
+        self.canvas.topology_scene.mediumTypeChanged.connect(self._on_scene_medium_type_changed)
+        
         # Property changes -> Canvas update
         self.property_panel.propertiesChanged.connect(self._on_properties_changed)
         
         # Node type change -> Canvas update
         self.property_panel.nodeTypeChanged.connect(self._on_node_type_changed)
+        
+        # Medium type change -> Canvas update
+        self.property_panel.mediumTypeChanged.connect(self._on_medium_type_changed)
         
         # Subnet applied -> Reassign IPs
         self.property_panel.subnetApplied.connect(self._on_subnet_applied)
@@ -632,14 +663,18 @@ class MainWindow(QMainWindow):
         self.property_panel.scroll_to_port(port.id)
         self.statusBar().showMessage(f"Selected port {port.display_name} on {node_model.name}", 2000)
     
-    def _on_properties_changed(self):
+    def _on_properties_changed(self, node_id: str):
         """Handle property changes."""
-        # Update node labels if name changed
-        selected = self.canvas.topology_scene.selectedItems()
-        for item in selected:
-            from views.topology_canvas import NodeGraphicsItem
-            if isinstance(item, NodeGraphicsItem):
-                item.update_label()
+        if not node_id:
+            # Link properties changed, nothing to update visually
+            return
+        
+        # Update node graphics (labels and ports)
+        from views.topology_canvas import NodeGraphicsItem
+        node_item = self.canvas.topology_scene.get_node_item(node_id)
+        if node_item:
+            node_item.update_label()
+            node_item.update_ports()  # Update port graphics (type labels, etc.)
     
     def _on_node_type_changed(self, node_id: str, new_type: NodeType):
         """Handle node type change from property panel."""
@@ -649,6 +684,25 @@ class MainWindow(QMainWindow):
             node_item.update_appearance()
             node_item.update_label()
         self.statusBar().showMessage(f"Changed node type to {new_type.name.lower()}", 2000)
+    
+    def _on_medium_type_changed(self, node_id: str, new_medium):
+        """Handle medium type change from property panel."""
+        from models import MediumType
+        # Update the visual representation
+        node_item = self.canvas.topology_scene.get_node_item(node_id)
+        if node_item:
+            node_item.update_appearance()
+            node_item.update_label()
+        medium_name = new_medium.name.replace('_', ' ').title() if hasattr(new_medium, 'name') else str(new_medium)
+        self.statusBar().showMessage(f"Changed medium type to {medium_name}", 2000)
+    
+    def _on_scene_medium_type_changed(self, node_id: str, new_medium):
+        """Handle medium type change from canvas context menu."""
+        from models import MediumType
+        # Refresh property panel to show updated medium
+        self.property_panel.refresh()
+        medium_name = new_medium.name.replace('_', ' ').title() if hasattr(new_medium, 'name') else str(new_medium)
+        self.statusBar().showMessage(f"Changed medium type to {medium_name}", 2000)
     
     def _on_subnet_applied(self, switch_id: str):
         """Handle subnet application to connected hosts."""
@@ -723,6 +777,48 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to generate script:\n{e}")
             return
         
+        # Check if preview is enabled
+        if hasattr(self.toolbar, 'preview_check') and self.toolbar.preview_check.isChecked():
+            try:
+                from views.code_preview_dialog import CodePreviewDialog
+                
+                # Show preview dialog
+                self.toolbar.set_running(False)
+                self.simulation_state.status = SimulationStatus.IDLE
+                
+                edited_script = CodePreviewDialog.preview_code(
+                    script, 
+                    "simulation.py",
+                    self
+                )
+                
+                if edited_script is None:
+                    # User cancelled
+                    self.statusBar().showMessage("Simulation cancelled", 2000)
+                    return
+                
+                # Use the edited script
+                script = edited_script
+                self.toolbar.set_running(True)
+                self.simulation_state.status = SimulationStatus.BUILDING
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self.toolbar.set_running(False)
+                self.simulation_state.status = SimulationStatus.IDLE
+                QMessageBox.critical(
+                    self, 
+                    "Preview Error",
+                    f"Failed to show code preview:\n{e}\n\nRunning without preview."
+                )
+                # Continue without preview
+                self.toolbar.set_running(True)
+                self.simulation_state.status = SimulationStatus.BUILDING
+        
+        # Save script to workspace (local copy)
+        self._save_script_to_workspace(script)
+        
         # Start simulation
         self.simulation_state.status = SimulationStatus.RUNNING
         self.simulation_state.end_time = self.sim_config.duration
@@ -734,6 +830,41 @@ class MainWindow(QMainWindow):
         if not success:
             self.simulation_state.set_error("Failed to start simulation")
             self.toolbar.set_running(False)
+    
+    def _save_script_to_workspace(self, script: str):
+        """
+        Save generated script to workspace directory for reference.
+        
+        Creates a 'generated_scripts' folder in the workspace and saves
+        the script with a timestamp.
+        """
+        import os
+        from datetime import datetime
+        
+        # Determine workspace directory
+        if self._current_project_path:
+            workspace_dir = os.path.dirname(self._current_project_path)
+        else:
+            # Use home directory if no project is open
+            workspace_dir = os.path.expanduser("~")
+        
+        # Create generated_scripts directory
+        scripts_dir = os.path.join(workspace_dir, "generated_scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_filename = f"simulation_{timestamp}.py"
+        script_path = os.path.join(scripts_dir, script_filename)
+        
+        # Save the script
+        try:
+            with open(script_path, 'w') as f:
+                f.write(script)
+            self.statusBar().showMessage(f"Script saved to {script_path}", 3000)
+        except Exception as e:
+            # Non-fatal error, just log it
+            print(f"Warning: Could not save script to workspace: {e}")
     
     def _on_stop_simulation(self):
         """Stop simulation."""
@@ -969,6 +1100,9 @@ class MainWindow(QMainWindow):
             self._update_window_title()
             self._update_counts()
             
+            # Track current project path
+            self._current_project_path = filepath
+            
             # Log success info
             node_count = len(self.network_model.nodes)
             link_count = len(self.network_model.links)
@@ -1069,6 +1203,9 @@ class MainWindow(QMainWindow):
             if self.project_manager.save(self.network_model, filepath):
                 self._update_window_title()
                 
+                # Track current project path
+                self._current_project_path = str(filepath)
+                
                 # Build detailed status message
                 node_count = len(self.network_model.nodes)
                 link_count = len(self.network_model.links)
@@ -1133,9 +1270,18 @@ class MainWindow(QMainWindow):
                 topology_path = result.get("topology_path")
                 if topology_path and os.path.exists(topology_path):
                     self._load_topology_file(Path(topology_path))
+                    
+                    # Import traffic flows if present
+                    traffic_flows = result.get("traffic_flows", [])
+                    if traffic_flows:
+                        self.sim_config.flows = traffic_flows
+                        flow_msg = f", {len(traffic_flows)} traffic flows"
+                    else:
+                        flow_msg = ""
+                    
                     self.statusBar().showMessage(
                         f"Imported {result.get('node_count', 0)} nodes, "
-                        f"{result.get('link_count', 0)} links from ns-3 example",
+                        f"{result.get('link_count', 0)} links{flow_msg} from ns-3 example",
                         5000
                     )
     
@@ -1582,7 +1728,14 @@ class SimulationConfigDialog(QDialog):
             source = self._network.get_node(flow.source_node_id)
             target = self._network.get_node(flow.target_node_id)
             source_name = source.name if source else "?"
-            target_name = target.name if target else "?"
+            
+            # Use target node name, or dest_address if no node, or "?" as fallback
+            if target:
+                target_name = target.name
+            elif flow.dest_address:
+                target_name = flow.dest_address
+            else:
+                target_name = "?"
             
             item = QListWidgetItem(
                 f"{flow.name}: {source_name} → {target_name} "

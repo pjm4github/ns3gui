@@ -372,9 +372,9 @@ class NS3ImportDialog(QDialog):
             rel_path = Path(filepath.name)
         
         try:
-            # Convert to NetworkModel
+            # Convert to NetworkModel and TrafficFlows
             converter = TopologyConverter()
-            network = converter.convert(self._extracted_topology)
+            network, traffic_flows = converter.convert(self._extracted_topology)
             
             # Save to workspace
             workspace = WorkspaceManager(workspace_root)
@@ -393,6 +393,7 @@ class NS3ImportDialog(QDialog):
                 "node_count": len(network.nodes),
                 "link_count": len(network.links),
                 "source_file": linux_path,
+                "traffic_flows": traffic_flows,
             }
             
             self.accept()

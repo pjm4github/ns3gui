@@ -115,6 +115,10 @@ class NS3ScriptGenerator:
         Returns:
             Complete Python script as string
         """
+        # Normalize output_dir to use forward slashes (for Linux compatibility)
+        # Windows paths with backslashes would be interpreted as escape sequences
+        output_dir = output_dir.replace('\\', '/')
+        
         # Build node index mapping (node_id -> integer index)
         self._node_index_map = {
             node_id: idx 
@@ -330,10 +334,10 @@ def main():
         """Generate IP address assignment.
         
         This method handles complex topologies with switches by:
-        1. Respecting user-defined IP addresses when present
-        2. Grouping switch-connected devices into segments
-        3. Using consistent subnets within each segment
-        4. Falling back to auto-assignment for unconfigured interfaces
+        1. Putting all hosts on the same switch segment on the same subnet
+        2. Respecting user-defined IP addresses when present
+        3. Using auto-assignment for unconfigured interfaces
+        4. Handling P2P links separately from switch segments
         """
         # Check if we have switches (bridged network)
         has_switches = any(
@@ -352,22 +356,16 @@ def main():
             "",
         ]
         
-        # Track which links are connected to switches
-        switch_connected_links = set()
-        if has_switches:
-            switch_segments = self._analyze_switch_segments(network)
-            for switch_id, connected in switch_segments.items():
-                for node_id, port_id, link_id in connected:
-                    switch_connected_links.add(link_id)
+        # Track which links have been processed (for switch segments)
+        processed_links = set()
         
         # Use a subnet counter for auto-assignment
         auto_subnet_counter = 1
         
-        # For each switch segment, determine its subnet and assign IPs
+        # First, handle switch segments - all hosts on same switch should be on same subnet
         if has_switches:
             switch_segments = self._analyze_switch_segments(network)
             
-            # Process each switch's segment
             for switch_id, connected_nodes in switch_segments.items():
                 switch_node = network.nodes.get(switch_id)
                 switch_name = switch_node.name if switch_node else "switch"
@@ -378,123 +376,142 @@ def main():
                 # Determine subnet for this switch segment
                 segment_subnet, segment_mask = self._determine_switch_subnet(network, connected_nodes)
                 
-                if segment_subnet:
-                    lines.extend([
-                        f"    # Switch segment: {switch_name}",
-                        f"    # Using subnet {segment_subnet}/24 based on configured IPs",
-                        f"    switch_subnet = '{segment_subnet}'",
-                        "",
-                    ])
-                else:
+                if not segment_subnet:
                     # Auto-assign subnet for this switch segment
                     segment_subnet = f"10.1.{auto_subnet_counter}.0"
                     auto_subnet_counter += 1
-                    lines.extend([
-                        f"    # Switch segment: {switch_name}",
-                        f"    # Auto-assigned subnet {segment_subnet}/24",
-                        f"    switch_subnet = '{segment_subnet}'",
-                        "",
-                    ])
                 
-                lines.append(f"    ipv4.SetBase(ns.Ipv4Address(switch_subnet), ns.Ipv4Mask('255.255.255.0'))")
-                lines.append("")
+                lines.extend([
+                    f"    # ----------------------------------------",
+                    f"    # Switch segment: {switch_name}",
+                    f"    # All hosts on this switch share subnet {segment_subnet}/24",
+                    f"    # ----------------------------------------",
+                    f"    ipv4.SetBase(ns.Ipv4Address('{segment_subnet}'), ns.Ipv4Mask('255.255.255.0'))",
+                    "",
+                ])
+                
+                # Assign IPs to all HOST nodes connected to this switch (skip other switches)
+                host_counter = 1
+                for node_id, port_id, link_id in connected_nodes:
+                    # Mark this link as processed
+                    processed_links.add(link_id)
+                    
+                    host_node = network.nodes.get(node_id)
+                    if not host_node:
+                        continue
+                    
+                    # Skip if this "connected node" is also a switch (switch-to-switch link)
+                    if host_node.node_type == NodeType.SWITCH:
+                        continue
+                    
+                    # Find the link index
+                    link_idx = list(network.links.keys()).index(link_id) if link_id in network.links else -1
+                    if link_idx < 0:
+                        continue
+                    
+                    link = network.links[link_id]
+                    
+                    # Determine which device index is the host (not the switch)
+                    if link.source_node_id == switch_id:
+                        dev_idx = 1  # Target is host
+                    else:
+                        dev_idx = 0  # Source is host
+                    
+                    # Check for user-configured IP on the SAME subnet as segment
+                    user_ip, _ = self._get_port_ip(host_node, port_id)
+                    use_user_ip = False
+                    
+                    if user_ip:
+                        # Check if user IP is on the same subnet as segment
+                        parts = user_ip.split('.')
+                        user_subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+                        if user_subnet == segment_subnet:
+                            use_user_ip = True
+                            host_octet = parts[3]
+                    
+                    if use_user_ip:
+                        # Use user IP (already on correct subnet)
+                        lines.extend([
+                            f"    # {host_node.name}: using configured IP {user_ip}",
+                            f"    host_dev{link_idx} = ns.NetDeviceContainer()",
+                            f"    host_dev{link_idx}.Add(devices{link_idx}.Get({dev_idx}))",
+                            f"    ipv4.SetBase(ns.Ipv4Address('{segment_subnet}'), ns.Ipv4Mask('255.255.255.0'), ns.Ipv4Address('0.0.0.{host_octet}'))",
+                            f"    interfaces{link_idx} = ipv4.Assign(host_dev{link_idx})",
+                            f"    all_interfaces.append(interfaces{link_idx})",
+                        ])
+                    else:
+                        # Auto-assign IP on switch segment (incrementing)
+                        lines.extend([
+                            f"    # {host_node.name}: auto-assigned IP {segment_subnet.rsplit('.', 1)[0]}.{host_counter}",
+                            f"    host_dev{link_idx} = ns.NetDeviceContainer()",
+                            f"    host_dev{link_idx}.Add(devices{link_idx}.Get({dev_idx}))",
+                            f"    interfaces{link_idx} = ipv4.Assign(host_dev{link_idx})",
+                            f"    all_interfaces.append(interfaces{link_idx})",
+                        ])
+                        host_counter += 1
+                    
+                    lines.append("")
         
-        # Now assign IPs per link
+        # Now handle remaining links (P2P links not connected to switches)
         for idx, (link_id, link) in enumerate(network.links.items()):
+            if link_id in processed_links:
+                continue  # Already handled as part of switch segment
+            
             source_node = network.nodes.get(link.source_node_id)
             target_node = network.nodes.get(link.target_node_id)
             
             source_is_switch = source_node and source_node.node_type in (NodeType.SWITCH,)
             target_is_switch = target_node and target_node.node_type in (NodeType.SWITCH,)
             
-            # Create interface container for this link
-            lines.append(f"    interfaces{idx} = ns.Ipv4InterfaceContainer()")
-            
             if source_is_switch and target_is_switch:
                 # Switch-to-switch link, no IP assignment
-                lines.append(f"    # Switch-to-switch link, no IP assignment")
-                
-            elif source_is_switch or target_is_switch:
-                # One end is switch - only assign IP to non-switch end
-                if source_is_switch:
-                    host_node = target_node
-                    host_port = link.target_port_id
-                    dev_idx = 1  # Target is device index 1
-                else:
-                    host_node = source_node
-                    host_port = link.source_port_id
-                    dev_idx = 0  # Source is device index 0
-                
-                # Check if this port has a user-defined IP
-                user_ip, user_mask = self._get_port_ip(host_node, host_port) if host_node else (None, None)
-                
-                if user_ip:
-                    # Use user-defined IP - extract subnet and set base
-                    parts = user_ip.split('.')
-                    subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-                    host_octet = parts[3]
-                    lines.extend([
-                        f"    # Using user-configured IP: {user_ip}",
-                        f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{user_mask}'), ns.Ipv4Address('0.0.0.{host_octet}'))",
-                        f"    host_dev{idx} = ns.NetDeviceContainer()",
-                        f"    host_dev{idx}.Add(devices{idx}.Get({dev_idx}))",
-                        f"    interfaces{idx} = ipv4.Assign(host_dev{idx})",
-                    ])
-                else:
-                    # Use auto-assigned IP from switch segment subnet
-                    lines.extend([
-                        f"    # Auto-assign IP on switch segment",
-                        f"    host_dev{idx} = ns.NetDeviceContainer()",
-                        f"    host_dev{idx}.Add(devices{idx}.Get({dev_idx}))",
-                        f"    interfaces{idx} = ipv4.Assign(host_dev{idx})",
-                    ])
-            else:
-                # Direct point-to-point link (no switch)
-                # Check for user-defined IPs on both ends
-                source_ip, source_mask = self._get_port_ip(source_node, link.source_port_id) if source_node else (None, None)
-                target_ip, target_mask = self._get_port_ip(target_node, link.target_port_id) if target_node else (None, None)
-                
-                if source_ip and target_ip:
-                    # Both have user-defined IPs - use source's subnet
-                    parts = source_ip.split('.')
-                    subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-                    lines.extend([
-                        f"    # Using user-configured IPs: {source_ip} <-> {target_ip}",
-                        f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{source_mask}'))",
-                        f"    interfaces{idx} = ipv4.Assign(devices{idx})",
-                    ])
-                elif source_ip:
-                    # Only source has IP
-                    parts = source_ip.split('.')
-                    subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-                    lines.extend([
-                        f"    # Source has configured IP: {source_ip}",
-                        f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{source_mask}'))",
-                        f"    interfaces{idx} = ipv4.Assign(devices{idx})",
-                    ])
-                elif target_ip:
-                    # Only target has IP
-                    parts = target_ip.split('.')
-                    subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-                    lines.extend([
-                        f"    # Target has configured IP: {target_ip}",
-                        f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{target_mask}'))",
-                        f"    interfaces{idx} = ipv4.Assign(devices{idx})",
-                    ])
-                else:
-                    # No user-defined IPs, auto-assign
-                    subnet = f"10.1.{auto_subnet_counter}.0"
-                    auto_subnet_counter += 1
-                    lines.extend([
-                        f"    # Auto-assign subnet {subnet}/24",
-                        f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('255.255.255.0'))",
-                        f"    interfaces{idx} = ipv4.Assign(devices{idx})",
-                    ])
+                lines.append(f"    # Link {idx}: Switch-to-switch, no IP assignment")
+                continue
             
-            lines.extend([
-                f"    all_interfaces.append(interfaces{idx})",
-                "",
-            ])
+            # Direct point-to-point link (no switch involved)
+            source_ip, source_mask = self._get_port_ip(source_node, link.source_port_id) if source_node else (None, None)
+            target_ip, target_mask = self._get_port_ip(target_node, link.target_port_id) if target_node else (None, None)
+            
+            if source_ip and target_ip:
+                # Both have user-defined IPs - use source's subnet
+                parts = source_ip.split('.')
+                subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+                lines.extend([
+                    f"    # Link {idx}: Using user-configured IPs: {source_ip} <-> {target_ip}",
+                    f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{source_mask}'))",
+                    f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    f"    all_interfaces.append(interfaces{idx})",
+                ])
+            elif source_ip:
+                parts = source_ip.split('.')
+                subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+                lines.extend([
+                    f"    # Link {idx}: Source has configured IP: {source_ip}",
+                    f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{source_mask}'))",
+                    f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    f"    all_interfaces.append(interfaces{idx})",
+                ])
+            elif target_ip:
+                parts = target_ip.split('.')
+                subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+                lines.extend([
+                    f"    # Link {idx}: Target has configured IP: {target_ip}",
+                    f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('{target_mask}'))",
+                    f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    f"    all_interfaces.append(interfaces{idx})",
+                ])
+            else:
+                # No user-defined IPs, auto-assign
+                subnet = f"10.1.{auto_subnet_counter}.0"
+                auto_subnet_counter += 1
+                lines.extend([
+                    f"    # Link {idx}: Auto-assign subnet {subnet}/24",
+                    f"    ipv4.SetBase(ns.Ipv4Address('{subnet}'), ns.Ipv4Mask('255.255.255.0'))",
+                    f"    interfaces{idx} = ipv4.Assign(devices{idx})",
+                    f"    all_interfaces.append(interfaces{idx})",
+                ])
+            
+            lines.append("")
         
         # Print IP addresses for reference
         lines.extend([
@@ -824,12 +841,19 @@ def main():
                 lines.extend(self._generate_echo_application(
                     flow_idx, flow, source_idx, target_idx, network
                 ))
+            elif flow.application == TrafficApplication.ONOFF:
+                lines.extend(self._generate_onoff_application(
+                    flow_idx, flow, source_idx, target_idx, network
+                ))
+            elif flow.application == TrafficApplication.BULK_SEND:
+                lines.extend(self._generate_bulk_send_application(
+                    flow_idx, flow, source_idx, target_idx, network
+                ))
             else:
-                # Stub for other application types
+                # Stub for other application types (ping, etc.)
                 lines.extend([
                     f"    # TODO: {flow.application.value} application not yet implemented",
-                    f"    # Supported types: echo",
-                    f"    # Future: onoff, bulk, ping",
+                    f"    # Supported types: echo, onoff, bulk_send",
                     "",
                 ])
         
@@ -933,6 +957,137 @@ def main():
         ]
         return lines
     
+    def _generate_onoff_application(
+        self, 
+        flow_idx: int, 
+        flow: TrafficFlow, 
+        source_idx: int, 
+        target_idx: int,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate OnOff (constant bitrate) application with PacketSink receiver."""
+        # Find the interface address for the target node
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: Cannot find interface for target node", ""]
+        
+        # Use port from flow or default
+        port = flow.port if flow.port else 9000 + flow_idx
+        
+        # Determine socket factory based on protocol
+        if flow.protocol == TrafficProtocol.TCP:
+            socket_factory = "ns3::TcpSocketFactory"
+        else:
+            socket_factory = "ns3::UdpSocketFactory"
+        
+        # Parse data rate - ensure it has units
+        data_rate = flow.data_rate or "500kb/s"
+        if not any(unit in data_rate.lower() for unit in ['bps', 'b/s', 'kbps', 'kb/s', 'mbps', 'mb/s', 'gbps', 'gb/s']):
+            data_rate = f"{data_rate}bps"
+        
+        packet_size = flow.packet_size or 512
+        
+        lines = [
+            f"    # OnOff Traffic: {flow.name}",
+            f"    # Protocol: {flow.protocol.value.upper()}, Rate: {data_rate}, Packet Size: {packet_size}",
+            "",
+            f"    # PacketSink (receiver) on node {target_idx}",
+            f"    sink_addr{flow_idx} = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"    sink{flow_idx} = ns.PacketSinkHelper('{socket_factory}', sink_addr{flow_idx}.ConvertTo())",
+            f"    sink_apps{flow_idx} = sink{flow_idx}.Install(nodes.Get({target_idx}))",
+            f"    sink_apps{flow_idx}.Start(ns.Seconds({max(0, flow.start_time - 0.5)}))",
+            f"    sink_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time + 1.0}))",
+            "",
+            f"    # OnOff (sender) on node {source_idx}",
+            f"    target_addr{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    print(f'Flow {flow_idx} ({flow.name}): {{nodes.Get({source_idx})}} -> {{target_addr{flow_idx}}}:{port} @ {data_rate}')",
+            f"    remote{flow_idx} = ns.InetSocketAddress(target_addr{flow_idx}, {port})",
+            f"    onoff{flow_idx} = ns.OnOffHelper('{socket_factory}', remote{flow_idx}.ConvertTo())",
+            f"    onoff{flow_idx}.SetAttribute('DataRate', ns.DataRateValue(ns.DataRate('{data_rate}')))",
+            f"    onoff{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({packet_size}))",
+            "    # Constant traffic (always on)",
+            f"    onoff{flow_idx}.SetAttribute('OnTime', ns.StringValue('ns3::ConstantRandomVariable[Constant=1]'))",
+            f"    onoff{flow_idx}.SetAttribute('OffTime', ns.StringValue('ns3::ConstantRandomVariable[Constant=0]'))",
+            f"    onoff_apps{flow_idx} = onoff{flow_idx}.Install(nodes.Get({source_idx}))",
+            f"    onoff_apps{flow_idx}.Start(ns.Seconds({flow.start_time}))",
+            f"    onoff_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
+            "",
+        ]
+        return lines
+    
+    def _generate_bulk_send_application(
+        self, 
+        flow_idx: int, 
+        flow: TrafficFlow, 
+        source_idx: int, 
+        target_idx: int,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate BulkSend (TCP max throughput) application with PacketSink receiver."""
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: Cannot find interface for target node", ""]
+        
+        port = flow.port if flow.port else 9000 + flow_idx
+        packet_size = flow.packet_size or 512
+        
+        lines = [
+            f"    # BulkSend Traffic: {flow.name}",
+            f"    # TCP bulk transfer (maximum throughput)",
+            "",
+            f"    # PacketSink (receiver) on node {target_idx}",
+            f"    sink_addr{flow_idx} = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"    sink{flow_idx} = ns.PacketSinkHelper('ns3::TcpSocketFactory', sink_addr{flow_idx}.ConvertTo())",
+            f"    sink_apps{flow_idx} = sink{flow_idx}.Install(nodes.Get({target_idx}))",
+            f"    sink_apps{flow_idx}.Start(ns.Seconds({max(0, flow.start_time - 0.5)}))",
+            f"    sink_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time + 1.0}))",
+            "",
+            f"    # BulkSend (sender) on node {source_idx}",
+            f"    target_addr{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    print(f'Flow {flow_idx} ({flow.name}): BulkSend to {{target_addr{flow_idx}}}:{port}')",
+            f"    remote{flow_idx} = ns.InetSocketAddress(target_addr{flow_idx}, {port})",
+            f"    bulk{flow_idx} = ns.BulkSendHelper('ns3::TcpSocketFactory', remote{flow_idx}.ConvertTo())",
+            f"    bulk{flow_idx}.SetAttribute('SendSize', ns.UintegerValue({packet_size}))",
+            f"    bulk{flow_idx}.SetAttribute('MaxBytes', ns.UintegerValue(0))",  # 0 = unlimited
+            f"    bulk_apps{flow_idx} = bulk{flow_idx}.Install(nodes.Get({source_idx}))",
+            f"    bulk_apps{flow_idx}.Start(ns.Seconds({flow.start_time}))",
+            f"    bulk_apps{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
+            "",
+        ]
+        return lines
+    
+    def _find_target_interface(self, flow: TrafficFlow, network: NetworkModel) -> tuple:
+        """Find the link index and interface index for a flow's target node."""
+        target_link_idx = None
+        interface_idx = 0
+        
+        for idx, (link_id, link) in enumerate(network.links.items()):
+            link_source = network.nodes.get(link.source_node_id)
+            link_target = network.nodes.get(link.target_node_id)
+            
+            if link.target_node_id == flow.target_node_id:
+                source_is_switch = link_source and link_source.node_type in (NodeType.SWITCH,)
+                if source_is_switch:
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    target_link_idx = idx
+                    interface_idx = 1
+                break
+            elif link.source_node_id == flow.target_node_id:
+                target_is_switch = link_target and link_target.node_type in (NodeType.SWITCH,)
+                if target_is_switch:
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    target_link_idx = idx
+                    interface_idx = 0
+                break
+        
+        return target_link_idx, interface_idx
+    
     def _generate_tracing(self, sim_config: SimulationConfig, output_dir: str) -> str:
         """Generate tracing/logging code."""
         lines = [
@@ -940,74 +1095,22 @@ def main():
             "    # Setup Tracing and Monitoring",
             "    # ============================================",
             "",
-            "    # Packet trace callback for GUI visualization",
-            "    packet_uid_counter = [0]  # Use list for mutable closure",
-            "    ",
-            "    def trace_tx(context, packet):",
-            "        # Parse context to get node and device",
-            "        # Context format: /NodeList/n/DeviceList/d/...",
-            "        try:",
-            "            parts = context.split('/')",
-            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
-            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
-            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
-            "            size = packet.GetSize()",
-            "            uid = packet_uid_counter[0]",
-            "            packet_uid_counter[0] += 1",
-            "            # Format: PKT|time_ns|event|node|device|size|src_node|dst_node|link_id|protocol",
-            "            print(f'PKT|{time_ns}|TX|{node_idx}|{dev_idx}|{size}|-1|-1||UDP')",
-            "        except:",
-            "            pass",
-            "    ",
-            "    def trace_rx(context, packet):",
-            "        try:",
-            "            parts = context.split('/')",
-            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
-            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
-            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
-            "            size = packet.GetSize()",
-            "            print(f'PKT|{time_ns}|RX|{node_idx}|{dev_idx}|{size}|-1|-1||UDP')",
-            "        except:",
-            "            pass",
-            "    ",
-            "    def trace_drop(context, packet):",
-            "        try:",
-            "            parts = context.split('/')",
-            "            node_idx = int(parts[2]) if len(parts) > 2 else 0",
-            "            dev_idx = int(parts[4]) if len(parts) > 4 else 0",
-            "            time_ns = ns.Simulator.Now().GetNanoSeconds()",
-            "            size = packet.GetSize()",
-            "            print(f'PKT|{time_ns}|DROP|{node_idx}|{dev_idx}|{size}|-1|-1||')",
-            "        except:",
-            "            pass",
-            "    ",
-            "    # Connect trace callbacks",
-            "    # Note: In ns-3 Python bindings, we use Config.Connect or device-specific callbacks",
-            "    # For now, we'll use the MacTx and MacRx callbacks if available",
-            "    try:",
-            "        ns.Config.ConnectWithoutContext(",
-            "            '/NodeList/*/DeviceList/*/$ns3::PointToPointNetDevice/MacTx',",
-            "            ns.MakeCallback(trace_tx))",
-            "        ns.Config.ConnectWithoutContext(",
-            "            '/NodeList/*/DeviceList/*/$ns3::PointToPointNetDevice/MacRx',",
-            "            ns.MakeCallback(trace_rx))",
-            "    except Exception as e:",
-            "        print(f'Note: Could not connect packet trace callbacks: {e}')",
-            "",
         ]
         
         if sim_config.enable_ascii_trace:
             lines.extend([
-                "    # ASCII Trace",
-                f"    ascii_trace = ns.AsciiTraceHelper()",
+                "    # ASCII Trace for packet-level details",
+                "    ascii_trace = ns.AsciiTraceHelper()",
                 f"    p2p.EnableAsciiAll(ascii_trace.CreateFileStream('{output_dir}/trace.tr'))",
+                f"    csma.EnableAsciiAll(ascii_trace.CreateFileStream('{output_dir}/csma-trace.tr'))",
                 "",
             ])
         
         if sim_config.enable_pcap:
             lines.extend([
                 "    # PCAP Trace (packet capture)",
-                f"    p2p.EnablePcapAll('{output_dir}/capture')",
+                f"    p2p.EnablePcapAll('{output_dir}/p2p-capture')",
+                f"    csma.EnablePcapAll('{output_dir}/csma-capture')",
                 "",
             ])
         

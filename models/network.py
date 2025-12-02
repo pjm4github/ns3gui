@@ -23,6 +23,27 @@ class NodeType(Enum):
     SWITCH = auto()  # Layer 2 device (also used to visualize CSMA segments)
 
 
+class MediumType(Enum):
+    """
+    Type of network medium/connection for a node.
+    
+    This affects the visual representation in the GUI:
+    - WIRED: Standard wired connection (default)
+    - WIFI_STATION: WiFi client/station node (wireless icon)
+    - WIFI_AP: WiFi access point (AP icon)
+    - LTE_UE: LTE user equipment (mobile icon)
+    - LTE_ENB: LTE eNodeB base station
+    
+    This is a property of the node, not the link, because in ns-3
+    a node's network device determines what medium it uses.
+    """
+    WIRED = auto()        # Default wired (Ethernet/P2P)
+    WIFI_STATION = auto() # WiFi station (client)
+    WIFI_AP = auto()      # WiFi access point
+    LTE_UE = auto()       # LTE user equipment
+    LTE_ENB = auto()      # LTE base station
+
+
 class ChannelType(Enum):
     """
     Types of network channel/medium for links.
@@ -218,6 +239,7 @@ class NodeModel:
     Attributes:
         id: Unique identifier
         node_type: Type of node (HOST, ROUTER, SWITCH)
+        medium_type: Network medium (WIRED, WIFI_STATION, WIFI_AP, etc.)
         name: Display name
         position: Canvas position
         ports: Physical/logical ports on this node
@@ -229,6 +251,7 @@ class NodeModel:
     """
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     node_type: NodeType = NodeType.HOST
+    medium_type: MediumType = MediumType.WIRED  # Network medium type
     name: str = ""
     position: Position = field(default_factory=Position)
     
@@ -447,8 +470,8 @@ class NetworkModel:
     # Global simulation settings
     simulation_duration: float = 10.0  # seconds
     
-    # Saved traffic flows (referenced by node IDs)
-    saved_flows: list = field(default_factory=list)  # List of TrafficFlow-like dicts
+    # Saved traffic flows (persisted with the topology file)
+    saved_flows: list = field(default_factory=list)  # List of TrafficFlow objects
     
     # Import metadata and tracking
     import_metadata: dict = field(default_factory=dict)  # Source file info, etc.
