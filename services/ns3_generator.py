@@ -125,6 +125,17 @@ class NS3ScriptGenerator:
             for idx, node_id in enumerate(network.nodes.keys())
         }
         
+        # Initialize link tracking (will be populated in _generate_channels)
+        self._link_device_map = {}    # link_id -> device_idx
+        self._wifi_link_ids = set()   # Track WiFi links that are skipped
+        self._wired_device_count = 0  # Count of wired devices created
+        
+        # Initialize WiFi tracking (will be populated in _generate_wifi_setup)
+        self._wifi_sta_devices_var = None
+        self._wifi_sta_count = 0
+        self._wifi_ap_devices_var = None
+        self._wifi_ap_count = 0
+        
         sections = [
             self._generate_header(network, sim_config),
             self._generate_imports(),
@@ -201,6 +212,12 @@ def main():
     
     def _generate_channels(self, network: NetworkModel) -> str:
         """Generate channel/link configuration."""
+        # Check if we have WiFi nodes
+        has_wifi = any(
+            node.node_type in (NodeType.STATION, NodeType.ACCESS_POINT)
+            for node in network.nodes.values()
+        )
+        
         lines = [
             "    # ============================================",
             "    # Create Links/Channels",
@@ -217,7 +234,18 @@ def main():
             "",
         ]
         
-        for idx, (link_id, link) in enumerate(network.links.items()):
+        # Generate WiFi setup if we have WiFi nodes
+        if has_wifi:
+            lines.extend(self._generate_wifi_setup(network))
+        
+        # Track which links are actually created (non-WiFi) and their mapping
+        # This maps original link_id to the device index used in generated code
+        self._link_device_map = {}  # link_id -> device_idx
+        self._wifi_link_ids = set()  # Track WiFi links that are skipped
+        
+        device_idx = 0  # Counter for created devices
+        
+        for link_id, link in network.links.items():
             source_idx = self._node_index_map.get(link.source_node_id, 0)
             target_idx = self._node_index_map.get(link.target_node_id, 0)
             
@@ -227,23 +255,48 @@ def main():
             source_name = source_node.name if source_node else "unknown"
             target_name = target_node.name if target_node else "unknown"
             
+            # Check if this is a WiFi link
+            # A link is WiFi ONLY if:
+            # 1. Explicitly marked as WiFi channel type, OR
+            # 2. It connects a STATION to another WiFi node (STATION or ACCESS_POINT)
+            # 
+            # An AP-to-Router/Switch/Host link is a WIRED uplink, not WiFi
+            source_is_station = source_node and source_node.node_type == NodeType.STATION
+            target_is_station = target_node and target_node.node_type == NodeType.STATION
+            source_is_ap = source_node and source_node.node_type == NodeType.ACCESS_POINT
+            target_is_ap = target_node and target_node.node_type == NodeType.ACCESS_POINT
+            
+            is_wifi_link = (
+                link.channel_type == ChannelType.WIFI or
+                (source_is_station and (target_is_station or target_is_ap)) or
+                (target_is_station and (source_is_station or source_is_ap))
+            )
+            
+            # Skip WiFi links here - they're handled in _generate_wifi_setup
+            if is_wifi_link:
+                self._wifi_link_ids.add(link_id)
+                continue
+            
+            # Store the mapping from link_id to device index
+            self._link_device_map[link_id] = device_idx
+            
             # Check if either end is a switch - must use CSMA for bridging
             source_is_switch = source_node and source_node.node_type == NodeType.SWITCH
             target_is_switch = target_node and target_node.node_type == NodeType.SWITCH
             use_csma = source_is_switch or target_is_switch or link.channel_type == ChannelType.CSMA
             
-            lines.append(f"    # Link {idx}: {source_name} <-> {target_name}")
+            lines.append(f"    # Link {device_idx}: {source_name} <-> {target_name}")
             
             if use_csma:
                 # CSMA required for switch bridging (P2P doesn't support SendFrom)
                 lines.extend([
                     f"    csma.SetChannelAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
                     f"    csma.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
-                    f"    link{idx}_nodes = ns.NodeContainer()",
-                    f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
-                    f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
-                    f"    devices{idx} = csma.Install(link{idx}_nodes)",
-                    f"    all_devices.append(devices{idx})",
+                    f"    link{device_idx}_nodes = ns.NodeContainer()",
+                    f"    link{device_idx}_nodes.Add(nodes.Get({source_idx}))",
+                    f"    link{device_idx}_nodes.Add(nodes.Get({target_idx}))",
+                    f"    devices{device_idx} = csma.Install(link{device_idx}_nodes)",
+                    f"    all_devices.append(devices{device_idx})",
                     "",
                 ])
             else:
@@ -251,27 +304,163 @@ def main():
                 lines.extend([
                     f"    p2p.SetDeviceAttribute('DataRate', ns.StringValue('{link.data_rate}'))",
                     f"    p2p.SetChannelAttribute('Delay', ns.StringValue('{link.delay}'))",
-                    f"    link{idx}_nodes = ns.NodeContainer()",
-                    f"    link{idx}_nodes.Add(nodes.Get({source_idx}))",
-                    f"    link{idx}_nodes.Add(nodes.Get({target_idx}))",
-                    f"    devices{idx} = p2p.Install(link{idx}_nodes)",
-                    f"    all_devices.append(devices{idx})",
+                    f"    link{device_idx}_nodes = ns.NodeContainer()",
+                    f"    link{device_idx}_nodes.Add(nodes.Get({source_idx}))",
+                    f"    link{device_idx}_nodes.Add(nodes.Get({target_idx}))",
+                    f"    devices{device_idx} = p2p.Install(link{device_idx}_nodes)",
+                    f"    all_devices.append(devices{device_idx})",
                     "",
                 ])
+            
+            device_idx += 1  # Increment for next device
+        
+        # Store the count for use in IP assignment
+        self._wired_device_count = device_idx
         
         return "\n".join(lines)
     
+    def _generate_wifi_setup(self, network: NetworkModel) -> list[str]:
+        """Generate WiFi network setup code."""
+        lines = [
+            "    # ----------------------------------------",
+            "    # WiFi Network Setup",
+            "    # ----------------------------------------",
+            "",
+        ]
+        
+        # Find all APs and stations
+        ap_nodes = []
+        sta_nodes = []
+        
+        for node_id, node in network.nodes.items():
+            idx = self._node_index_map.get(node_id, 0)
+            if node.node_type == NodeType.ACCESS_POINT:
+                ap_nodes.append((idx, node))
+            elif node.node_type == NodeType.STATION:
+                sta_nodes.append((idx, node))
+        
+        if not ap_nodes and not sta_nodes:
+            return []
+        
+        # Get WiFi settings from the first AP (or use defaults)
+        wifi_standard = "802.11n"
+        wifi_ssid = "ns3-wifi"
+        wifi_channel = 1
+        wifi_band = "2.4GHz"
+        
+        if ap_nodes:
+            ap_node = ap_nodes[0][1]
+            wifi_standard = getattr(ap_node, 'wifi_standard', '802.11n')
+            wifi_ssid = getattr(ap_node, 'wifi_ssid', 'ns3-wifi')
+            wifi_channel = getattr(ap_node, 'wifi_channel', 1)
+            wifi_band = getattr(ap_node, 'wifi_band', '2.4GHz')
+        
+        # Map wifi standard to ns-3 enum
+        wifi_standard_map = {
+            "802.11a": "WIFI_STANDARD_80211a",
+            "802.11b": "WIFI_STANDARD_80211b",
+            "802.11g": "WIFI_STANDARD_80211g",
+            "802.11n": "WIFI_STANDARD_80211n",
+            "802.11ac": "WIFI_STANDARD_80211ac",
+            "802.11ax": "WIFI_STANDARD_80211ax",
+        }
+        ns3_standard = wifi_standard_map.get(wifi_standard, "WIFI_STANDARD_80211n")
+        
+        lines.extend([
+            f"    # WiFi Configuration: {wifi_standard}, SSID: {wifi_ssid}",
+            f"    wifi_ssid = ns.Ssid('{wifi_ssid}')",
+            "",
+            "    # Create WiFi channel and PHY",
+            "    wifi_channel = ns.YansWifiChannelHelper.Default()",
+            "    wifi_phy = ns.YansWifiPhyHelper()",
+            "    wifi_phy.SetChannel(wifi_channel.Create())",
+            "",
+            "    # WiFi helper",
+            "    wifi = ns.WifiHelper()",
+            f"    wifi.SetStandard(ns.{ns3_standard})",
+            "    wifi.SetRemoteStationManager('ns3::AarfWifiManager')",
+            "",
+            "    # MAC configuration",
+            "    wifi_mac = ns.WifiMacHelper()",
+            "",
+        ])
+        
+        # Setup station nodes
+        if sta_nodes:
+            sta_indices = [idx for idx, _ in sta_nodes]
+            lines.extend([
+                "    # WiFi Stations",
+                "    sta_nodes = ns.NodeContainer()",
+            ])
+            for idx in sta_indices:
+                lines.append(f"    sta_nodes.Add(nodes.Get({idx}))")
+            
+            lines.extend([
+                "",
+                "    wifi_mac.SetType('ns3::StaWifiMac',",
+                "        'Ssid', ns.SsidValue(wifi_ssid),",
+                "        'ActiveProbing', ns.BooleanValue(False))",
+                "    sta_devices = wifi.Install(wifi_phy, wifi_mac, sta_nodes)",
+                "    all_devices.append(sta_devices)",
+                "",
+            ])
+            
+            # Store WiFi device info for IP assignment
+            self._wifi_sta_devices_var = "sta_devices"
+            self._wifi_sta_count = len(sta_nodes)
+        
+        # Setup AP nodes
+        if ap_nodes:
+            ap_indices = [idx for idx, _ in ap_nodes]
+            lines.extend([
+                "    # WiFi Access Points",
+                "    ap_nodes = ns.NodeContainer()",
+            ])
+            for idx in ap_indices:
+                lines.append(f"    ap_nodes.Add(nodes.Get({idx}))")
+            
+            lines.extend([
+                "",
+                "    wifi_mac.SetType('ns3::ApWifiMac',",
+                "        'Ssid', ns.SsidValue(wifi_ssid))",
+                "    ap_devices = wifi.Install(wifi_phy, wifi_mac, ap_nodes)",
+                "    all_devices.append(ap_devices)",
+                "",
+            ])
+            
+            self._wifi_ap_devices_var = "ap_devices"
+            self._wifi_ap_count = len(ap_nodes)
+        
+        # Setup mobility (required for WiFi)
+        lines.extend([
+            "    # Mobility (required for WiFi)",
+            "    mobility = ns.MobilityHelper()",
+            "    mobility.SetMobilityModel('ns3::ConstantPositionMobilityModel')",
+            "",
+        ])
+        
+        if sta_nodes:
+            lines.append("    mobility.Install(sta_nodes)")
+        if ap_nodes:
+            lines.append("    mobility.Install(ap_nodes)")
+        
+        lines.append("")
+        
+        return lines
+    
     def _generate_internet_stack(self, network: NetworkModel) -> str:
         """Generate IP stack installation."""
-        # Find switch/router nodes that should act as bridges
+        # Find switch nodes that should act as bridges
+        # STATION and ACCESS_POINT get IP stack (they're like hosts/routers for L3)
         switch_indices = []
         host_indices = []
         
         for node_id, node in network.nodes.items():
             idx = self._node_index_map.get(node_id, 0)
-            if node.node_type in (NodeType.SWITCH,):
+            if node.node_type == NodeType.SWITCH:
                 switch_indices.append(idx)
             else:
+                # HOST, ROUTER, STATION, ACCESS_POINT all get IP stack
                 host_indices.append(idx)
         
         lines = [
@@ -285,7 +474,7 @@ def main():
         if switch_indices:
             # Only install IP stack on non-switch nodes
             lines.extend([
-                "    # Install Internet stack only on hosts/routers (not switches)",
+                "    # Install Internet stack only on hosts/routers/WiFi nodes (not L2 switches)",
                 "    host_nodes = ns.NodeContainer()",
             ])
             for idx in host_indices:
@@ -300,25 +489,34 @@ def main():
             
             # For each switch, bridge all its connected devices
             for switch_id, switch_node in network.nodes.items():
-                if switch_node.node_type not in (NodeType.SWITCH,):
+                if switch_node.node_type != NodeType.SWITCH:
                     continue
                 
                 switch_idx = self._node_index_map.get(switch_id, 0)
                 
                 # Find all links connected to this switch
-                connected_link_indices = []
-                for link_idx, (link_id, link) in enumerate(network.links.items()):
+                connected_link_info = []
+                for link_id, link in network.links.items():
+                    # Skip WiFi links (they don't go through switches)
+                    if link_id in self._wifi_link_ids:
+                        continue
+                    
+                    # Get the device index from our mapping
+                    device_idx = self._link_device_map.get(link_id)
+                    if device_idx is None:
+                        continue
+                    
                     if link.source_node_id == switch_id or link.target_node_id == switch_id:
-                        connected_link_indices.append((link_idx, link.source_node_id == switch_id))
+                        connected_link_info.append((device_idx, link.source_node_id == switch_id))
                 
-                if connected_link_indices:
+                if connected_link_info:
                     lines.append(f"    # Bridge devices on switch node {switch_idx} ({switch_node.name})")
                     lines.append(f"    switch{switch_idx}_devices = ns.NetDeviceContainer()")
                     
-                    for link_idx, is_source in connected_link_indices:
+                    for device_idx, is_source in connected_link_info:
                         # Device index: 0 if switch is source, 1 if switch is target
                         dev_idx = 0 if is_source else 1
-                        lines.append(f"    switch{switch_idx}_devices.Add(devices{link_idx}.Get({dev_idx}))")
+                        lines.append(f"    switch{switch_idx}_devices.Add(devices{device_idx}.Get({dev_idx}))")
                     
                     lines.append(f"    bridge_helper.Install(nodes.Get({switch_idx}), switch{switch_idx}_devices)")
                     lines.append("")
@@ -396,6 +594,10 @@ def main():
                     # Mark this link as processed
                     processed_links.add(link_id)
                     
+                    # Skip WiFi links
+                    if link_id in self._wifi_link_ids:
+                        continue
+                    
                     host_node = network.nodes.get(node_id)
                     if not host_node:
                         continue
@@ -404,9 +606,9 @@ def main():
                     if host_node.node_type == NodeType.SWITCH:
                         continue
                     
-                    # Find the link index
-                    link_idx = list(network.links.keys()).index(link_id) if link_id in network.links else -1
-                    if link_idx < 0:
+                    # Get the device index from our mapping
+                    device_idx = self._link_device_map.get(link_id)
+                    if device_idx is None:
                         continue
                     
                     link = network.links[link_id]
@@ -433,35 +635,44 @@ def main():
                         # Use user IP (already on correct subnet)
                         lines.extend([
                             f"    # {host_node.name}: using configured IP {user_ip}",
-                            f"    host_dev{link_idx} = ns.NetDeviceContainer()",
-                            f"    host_dev{link_idx}.Add(devices{link_idx}.Get({dev_idx}))",
+                            f"    host_dev{device_idx} = ns.NetDeviceContainer()",
+                            f"    host_dev{device_idx}.Add(devices{device_idx}.Get({dev_idx}))",
                             f"    ipv4.SetBase(ns.Ipv4Address('{segment_subnet}'), ns.Ipv4Mask('255.255.255.0'), ns.Ipv4Address('0.0.0.{host_octet}'))",
-                            f"    interfaces{link_idx} = ipv4.Assign(host_dev{link_idx})",
-                            f"    all_interfaces.append(interfaces{link_idx})",
+                            f"    interfaces{device_idx} = ipv4.Assign(host_dev{device_idx})",
+                            f"    all_interfaces.append(interfaces{device_idx})",
                         ])
                     else:
                         # Auto-assign IP on switch segment (incrementing)
                         lines.extend([
                             f"    # {host_node.name}: auto-assigned IP {segment_subnet.rsplit('.', 1)[0]}.{host_counter}",
-                            f"    host_dev{link_idx} = ns.NetDeviceContainer()",
-                            f"    host_dev{link_idx}.Add(devices{link_idx}.Get({dev_idx}))",
-                            f"    interfaces{link_idx} = ipv4.Assign(host_dev{link_idx})",
-                            f"    all_interfaces.append(interfaces{link_idx})",
+                            f"    host_dev{device_idx} = ns.NetDeviceContainer()",
+                            f"    host_dev{device_idx}.Add(devices{device_idx}.Get({dev_idx}))",
+                            f"    interfaces{device_idx} = ipv4.Assign(host_dev{device_idx})",
+                            f"    all_interfaces.append(interfaces{device_idx})",
                         ])
                         host_counter += 1
                     
                     lines.append("")
         
         # Now handle remaining links (P2P links not connected to switches)
-        for idx, (link_id, link) in enumerate(network.links.items()):
+        for link_id, link in network.links.items():
             if link_id in processed_links:
                 continue  # Already handled as part of switch segment
+            
+            # Skip WiFi links - they're handled separately
+            if link_id in self._wifi_link_ids:
+                continue
+            
+            # Get the device index from our mapping
+            idx = self._link_device_map.get(link_id)
+            if idx is None:
+                continue  # Link wasn't created (shouldn't happen)
             
             source_node = network.nodes.get(link.source_node_id)
             target_node = network.nodes.get(link.target_node_id)
             
-            source_is_switch = source_node and source_node.node_type in (NodeType.SWITCH,)
-            target_is_switch = target_node and target_node.node_type in (NodeType.SWITCH,)
+            source_is_switch = source_node and source_node.node_type == NodeType.SWITCH
+            target_is_switch = target_node and target_node.node_type == NodeType.SWITCH
             
             if source_is_switch and target_is_switch:
                 # Switch-to-switch link, no IP assignment
@@ -513,20 +724,69 @@ def main():
             
             lines.append("")
         
+        # Handle WiFi IP assignment if we have WiFi devices
+        has_wifi = any(
+            node.node_type in (NodeType.STATION, NodeType.ACCESS_POINT)
+            for node in network.nodes.values()
+        )
+        
+        if has_wifi:
+            wifi_subnet = f"10.1.{auto_subnet_counter}.0"
+            auto_subnet_counter += 1
+            
+            lines.extend([
+                "    # ----------------------------------------",
+                "    # WiFi Network IP Assignment",
+                f"    # All WiFi devices share subnet {wifi_subnet}/24",
+                "    # ----------------------------------------",
+                f"    ipv4.SetBase(ns.Ipv4Address('{wifi_subnet}'), ns.Ipv4Mask('255.255.255.0'))",
+                "",
+            ])
+            
+            # Check if we have sta_devices and ap_devices variables
+            if hasattr(self, '_wifi_sta_devices_var') and self._wifi_sta_count > 0:
+                lines.extend([
+                    "    # Assign IPs to WiFi stations",
+                    "    wifi_sta_interfaces = ipv4.Assign(sta_devices)",
+                    "    all_interfaces.append(wifi_sta_interfaces)",
+                    f"    for i in range({self._wifi_sta_count}):",
+                    "        print(f'  WiFi Station {{i}}: {{wifi_sta_interfaces.GetAddress(i)}}')",
+                    "",
+                ])
+            
+            if hasattr(self, '_wifi_ap_devices_var') and self._wifi_ap_count > 0:
+                lines.extend([
+                    "    # Assign IPs to WiFi access points",
+                    "    wifi_ap_interfaces = ipv4.Assign(ap_devices)",
+                    "    all_interfaces.append(wifi_ap_interfaces)",
+                    f"    for i in range({self._wifi_ap_count}):",
+                    "        print(f'  WiFi AP {{i}}: {{wifi_ap_interfaces.GetAddress(i)}}')",
+                    "",
+                ])
+        
         # Print IP addresses for reference
         lines.extend([
             "    # Print assigned IP addresses",
             "    print('\\nIP Address Assignment:')",
         ])
         
-        for idx, (link_id, link) in enumerate(network.links.items()):
+        for link_id, link in network.links.items():
+            # Skip WiFi links
+            if link_id in self._wifi_link_ids:
+                continue
+            
+            # Get the device index from our mapping
+            idx = self._link_device_map.get(link_id)
+            if idx is None:
+                continue
+            
             source_node = network.nodes.get(link.source_node_id)
             target_node = network.nodes.get(link.target_node_id)
             source_name = source_node.name if source_node else "unknown"
             target_name = target_node.name if target_node else "unknown"
             
-            source_is_switch = source_node and source_node.node_type in (NodeType.SWITCH,)
-            target_is_switch = target_node and target_node.node_type in (NodeType.SWITCH,)
+            source_is_switch = source_node and source_node.node_type == NodeType.SWITCH
+            target_is_switch = target_node and target_node.node_type == NodeType.SWITCH
             
             if source_is_switch and target_is_switch:
                 lines.append(f"    print(f'  Link {idx}: {source_name} <-> {target_name} (no IP - switch link)')")

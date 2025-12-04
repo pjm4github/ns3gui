@@ -223,6 +223,12 @@ class TopologyConverter:
         # Map medium hint to medium type
         medium_type = self._map_medium_type(ext_node.medium_hint)
         
+        # Override node_type based on medium_hint for WiFi nodes
+        if ext_node.medium_hint == MediumHint.WIFI_STATION:
+            node_type = NodeType.STATION
+        elif ext_node.medium_hint == MediumHint.WIFI_AP:
+            node_type = NodeType.ACCESS_POINT
+        
         # Generate name
         name = f"{ext_node.container_name}_{ext_node.index}"
         
@@ -243,7 +249,7 @@ class TopologyConverter:
             ExtractedNodeType.HOST: NodeType.HOST,
             ExtractedNodeType.ROUTER: NodeType.ROUTER,
             ExtractedNodeType.SWITCH: NodeType.SWITCH,
-            ExtractedNodeType.ACCESS_POINT: NodeType.ROUTER,  # Treat AP as router for now
+            ExtractedNodeType.ACCESS_POINT: NodeType.ACCESS_POINT,
             ExtractedNodeType.UNKNOWN: NodeType.HOST,
         }
         return mapping.get(ext_type, NodeType.HOST)
@@ -445,6 +451,7 @@ class TopologyConverter:
         mapping = {
             ExtractedLinkType.POINT_TO_POINT: ChannelType.POINT_TO_POINT,
             ExtractedLinkType.CSMA: ChannelType.CSMA,
+            ExtractedLinkType.WIFI: ChannelType.WIFI,
         }
         
         if link_type in mapping:

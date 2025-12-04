@@ -427,6 +427,14 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("&Help")
         
+        # ns-3 API Help
+        ns3_help_action = QAction("ns-3 &Simulation Guide", self)
+        ns3_help_action.setShortcut("F1")
+        ns3_help_action.triggered.connect(self._on_show_help)
+        help_menu.addAction(ns3_help_action)
+        
+        help_menu.addSeparator()
+        
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
@@ -1407,6 +1415,12 @@ class MainWindow(QMainWindow):
         self.canvas.topology_scene.clear_route_highlights()
         self._show_routes_action.setChecked(False)
         self.statusBar().showMessage("Route highlights cleared", 2000)
+    
+    def _on_show_help(self):
+        """Show the ns-3 simulation help dialog."""
+        from views.help_dialog import HelpDialog
+        dialog = HelpDialog(self)
+        dialog.exec()
     
     def _on_about(self):
         """Show about dialog."""

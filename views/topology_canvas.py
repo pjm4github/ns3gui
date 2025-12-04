@@ -27,6 +27,8 @@ COLORS = {
     NodeType.HOST: QColor("#4A90D9"),      # Blue
     NodeType.ROUTER: QColor("#7B68EE"),    # Purple  
     NodeType.SWITCH: QColor("#50C878"),    # Green
+    NodeType.STATION: QColor("#FF9500"),   # Orange for WiFi station
+    NodeType.ACCESS_POINT: QColor("#FF3B30"), # Red for access point
     "link_p2p": QColor("#6B7280"),         # Gray
     "link_csma": QColor("#F59E0B"),        # Orange
     "link_wifi": QColor("#06B6D4"),        # Cyan for WiFi
@@ -300,9 +302,11 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
             NodeType.HOST: "H",
             NodeType.ROUTER: "R",
             NodeType.SWITCH: "S",
+            NodeType.STATION: "📶",     # WiFi station
+            NodeType.ACCESS_POINT: "AP", # Access point
         }.get(self.node_model.node_type, "?")
         
-        # Add wireless indicator for non-wired medium
+        # Add wireless indicator for non-wired medium (legacy support)
         medium = getattr(self.node_model, 'medium_type', MediumType.WIRED)
         if medium == MediumType.WIFI_STATION:
             return "📶"  # WiFi station

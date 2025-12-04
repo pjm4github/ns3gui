@@ -503,6 +503,8 @@ class NodePropertiesWidget(QWidget):
         self._type_combo.addItem("Host", NodeType.HOST)
         self._type_combo.addItem("Router", NodeType.ROUTER)
         self._type_combo.addItem("Switch", NodeType.SWITCH)
+        self._type_combo.addItem("WiFi Station", NodeType.STATION)
+        self._type_combo.addItem("Access Point", NodeType.ACCESS_POINT)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         self._type_combo.setStyleSheet(input_style())
         form.addRow("Type:", self._type_combo)
@@ -712,6 +714,61 @@ class NodePropertiesWidget(QWidget):
         switch_layout.addRow("", self._apply_subnet_btn)
         
         self._type_settings_container.addWidget(self._switch_widget)
+        
+        # WiFi-specific settings (for STATION and ACCESS_POINT)
+        self._wifi_widget = QWidget()
+        wifi_layout = QFormLayout(self._wifi_widget)
+        wifi_layout.setContentsMargins(0, 0, 0, 0)
+        wifi_layout.setSpacing(8)
+        
+        wifi_header = QLabel("WiFi Settings")
+        wifi_header.setStyleSheet("font-weight: bold; color: #374151; margin-top: 4px;")
+        wifi_layout.addRow(wifi_header)
+        
+        # WiFi Standard
+        self._wifi_standard_combo = QComboBox()
+        self._wifi_standard_combo.addItem("802.11b (2.4GHz, 11Mbps)", "802.11b")
+        self._wifi_standard_combo.addItem("802.11g (2.4GHz, 54Mbps)", "802.11g")
+        self._wifi_standard_combo.addItem("802.11n (2.4/5GHz, 600Mbps)", "802.11n")
+        self._wifi_standard_combo.addItem("802.11ac (5GHz, 6.9Gbps)", "802.11ac")
+        self._wifi_standard_combo.addItem("802.11ax (WiFi 6)", "802.11ax")
+        self._wifi_standard_combo.currentIndexChanged.connect(self._on_wifi_prop_changed)
+        self._wifi_standard_combo.setStyleSheet(input_style())
+        wifi_layout.addRow("Standard:", self._wifi_standard_combo)
+        
+        # SSID (for AP)
+        self._wifi_ssid_edit = QLineEdit()
+        self._wifi_ssid_edit.setPlaceholderText("ns3-wifi")
+        self._wifi_ssid_edit.textChanged.connect(self._on_wifi_prop_changed)
+        self._wifi_ssid_edit.setStyleSheet(input_style())
+        wifi_layout.addRow("SSID:", self._wifi_ssid_edit)
+        
+        # Channel
+        self._wifi_channel_spin = QSpinBox()
+        self._wifi_channel_spin.setRange(1, 165)
+        self._wifi_channel_spin.setValue(1)
+        self._wifi_channel_spin.valueChanged.connect(self._on_wifi_prop_changed)
+        self._wifi_channel_spin.setStyleSheet(input_style())
+        wifi_layout.addRow("Channel:", self._wifi_channel_spin)
+        
+        # Band
+        self._wifi_band_combo = QComboBox()
+        self._wifi_band_combo.addItem("2.4 GHz", "2.4GHz")
+        self._wifi_band_combo.addItem("5 GHz", "5GHz")
+        self._wifi_band_combo.currentIndexChanged.connect(self._on_wifi_prop_changed)
+        self._wifi_band_combo.setStyleSheet(input_style())
+        wifi_layout.addRow("Band:", self._wifi_band_combo)
+        
+        # TX Power
+        self._wifi_tx_power_spin = QDoubleSpinBox()
+        self._wifi_tx_power_spin.setRange(0, 30)
+        self._wifi_tx_power_spin.setValue(20.0)
+        self._wifi_tx_power_spin.setSuffix(" dBm")
+        self._wifi_tx_power_spin.valueChanged.connect(self._on_wifi_prop_changed)
+        self._wifi_tx_power_spin.setStyleSheet(input_style())
+        wifi_layout.addRow("TX Power:", self._wifi_tx_power_spin)
+        
+        self._type_settings_container.addWidget(self._wifi_widget)
     
     def set_node(self, node: Optional[NodeModel]):
         # Only rebuild if it's a different node
@@ -731,6 +788,7 @@ class NodePropertiesWidget(QWidget):
         self._host_widget.hide()
         self._router_widget.hide()
         self._switch_widget.hide()
+        self._wifi_widget.hide()
         
         if not self._node:
             self._name_edit.clear()
@@ -817,6 +875,42 @@ class NodePropertiesWidget(QWidget):
             idx = self._subnet_mask_combo.findData(self._node.subnet_mask)
             self._subnet_mask_combo.setCurrentIndex(idx if idx >= 0 else 0)
             self._subnet_mask_combo.blockSignals(False)
+        
+        elif self._node.node_type in (NodeType.STATION, NodeType.ACCESS_POINT):
+            self._wifi_widget.show()
+            
+            # WiFi Standard
+            self._wifi_standard_combo.blockSignals(True)
+            idx = self._wifi_standard_combo.findData(getattr(self._node, 'wifi_standard', '802.11n'))
+            self._wifi_standard_combo.setCurrentIndex(idx if idx >= 0 else 2)  # Default to 802.11n
+            self._wifi_standard_combo.blockSignals(False)
+            
+            # SSID
+            self._wifi_ssid_edit.blockSignals(True)
+            self._wifi_ssid_edit.setText(getattr(self._node, 'wifi_ssid', 'ns3-wifi'))
+            self._wifi_ssid_edit.blockSignals(False)
+            
+            # Show/hide SSID based on node type (only AP really needs SSID)
+            ssid_label = self._wifi_widget.layout().labelForField(self._wifi_ssid_edit)
+            if ssid_label:
+                ssid_label.setVisible(self._node.node_type == NodeType.ACCESS_POINT)
+            self._wifi_ssid_edit.setVisible(self._node.node_type == NodeType.ACCESS_POINT)
+            
+            # Channel
+            self._wifi_channel_spin.blockSignals(True)
+            self._wifi_channel_spin.setValue(getattr(self._node, 'wifi_channel', 1))
+            self._wifi_channel_spin.blockSignals(False)
+            
+            # Band
+            self._wifi_band_combo.blockSignals(True)
+            idx = self._wifi_band_combo.findData(getattr(self._node, 'wifi_band', '2.4GHz'))
+            self._wifi_band_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._wifi_band_combo.blockSignals(False)
+            
+            # TX Power
+            self._wifi_tx_power_spin.blockSignals(True)
+            self._wifi_tx_power_spin.setValue(getattr(self._node, 'wifi_tx_power', 20.0))
+            self._wifi_tx_power_spin.blockSignals(False)
     
     def _on_name_changed(self, text):
         if self._node:
@@ -860,6 +954,16 @@ class NodePropertiesWidget(QWidget):
         if self._node and self._node.node_type == NodeType.SWITCH:
             self._node.switching_mode = self._switch_mode_combo.currentData()
             self._node.stp_enabled = self._stp_check.isChecked()
+            self.propertiesChanged.emit()
+    
+    def _on_wifi_prop_changed(self):
+        """Handle WiFi property changes."""
+        if self._node and self._node.node_type in (NodeType.STATION, NodeType.ACCESS_POINT):
+            self._node.wifi_standard = self._wifi_standard_combo.currentData()
+            self._node.wifi_ssid = self._wifi_ssid_edit.text() or "ns3-wifi"
+            self._node.wifi_channel = self._wifi_channel_spin.value()
+            self._node.wifi_band = self._wifi_band_combo.currentData()
+            self._node.wifi_tx_power = self._wifi_tx_power_spin.value()
             self.propertiesChanged.emit()
     
     def _on_subnet_changed(self):

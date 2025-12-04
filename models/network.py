@@ -18,9 +18,11 @@ class NodeType(Enum):
     Note: In ns-3, all nodes are generic. This type is for GUI visualization
     and determines the icon/behavior in the editor.
     """
-    HOST = auto()    # End device (client, server, workstation)
-    ROUTER = auto()  # Forwards packets between networks
-    SWITCH = auto()  # Layer 2 device (also used to visualize CSMA segments)
+    HOST = auto()         # End device (client, server, workstation) - wired
+    ROUTER = auto()       # Forwards packets between networks
+    SWITCH = auto()       # Layer 2 device (also used to visualize CSMA segments)
+    STATION = auto()      # WiFi station (wireless client)
+    ACCESS_POINT = auto() # WiFi access point
 
 
 class MediumType(Enum):
@@ -51,12 +53,14 @@ class ChannelType(Enum):
     This represents the physical layer connection type:
     - POINT_TO_POINT: Dedicated link between exactly 2 nodes (like a cable)
     - CSMA: Shared medium where multiple nodes share bandwidth (like Ethernet hub)
+    - WIFI: 802.11 wireless channel
     
     In ns-3, CSMA uses Carrier Sense Multiple Access protocol where nodes
     listen before transmitting to avoid collisions.
     """
     POINT_TO_POINT = auto()  # Dedicated point-to-point link
     CSMA = auto()            # Carrier Sense Multiple Access (shared medium)
+    WIFI = auto()            # 802.11 WiFi wireless
 
 
 class RoutingMode(Enum):
@@ -176,6 +180,14 @@ DEFAULT_PORT_CONFIGS = {
         "num_ports": 8,
         "port_type": PortType.GIGABIT_ETHERNET,
     },
+    NodeType.STATION: {
+        "num_ports": 1,
+        "port_type": PortType.WIRELESS,
+    },
+    NodeType.ACCESS_POINT: {
+        "num_ports": 2,  # 1 wireless + 1 wired uplink
+        "port_type": PortType.WIRELESS,
+    },
 }
 
 
@@ -271,6 +283,13 @@ class NodeModel:
     subnet_base: str = ""  # e.g., "192.168.1.0" - if set, all connected hosts use this subnet
     subnet_mask: str = "255.255.255.0"
     _next_host_ip: int = field(default=1, repr=False)  # Next host IP in subnet
+    
+    # WiFi-specific properties (for STATION and ACCESS_POINT)
+    wifi_standard: str = "802.11n"  # 802.11a, 802.11b, 802.11g, 802.11n, 802.11ac, 802.11ax
+    wifi_ssid: str = "ns3-wifi"     # Network SSID (used by AP)
+    wifi_channel: int = 1           # WiFi channel number (1-11 for 2.4GHz, 36-165 for 5GHz)
+    wifi_band: str = "2.4GHz"       # 2.4GHz or 5GHz
+    wifi_tx_power: float = 20.0     # Transmit power in dBm
     
     # Routing table (for hosts and routers)
     routing_mode: RoutingMode = RoutingMode.AUTO

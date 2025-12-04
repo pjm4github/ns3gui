@@ -29,18 +29,24 @@ class NodeTypeButton(QPushButton):
         NodeType.HOST: "#4A90D9",
         NodeType.ROUTER: "#7B68EE",
         NodeType.SWITCH: "#50C878",
+        NodeType.STATION: "#FF9500",      # Orange for WiFi station
+        NodeType.ACCESS_POINT: "#FF3B30", # Red for access point
     }
     
     ICONS = {
         NodeType.HOST: "H",
         NodeType.ROUTER: "R", 
         NodeType.SWITCH: "S",
+        NodeType.STATION: "📶",    # WiFi symbol or W
+        NodeType.ACCESS_POINT: "AP",
     }
     
     DESCRIPTIONS = {
         NodeType.HOST: "End device (PC, server)",
         NodeType.ROUTER: "Routes between networks",
         NodeType.SWITCH: "L2 network switch",
+        NodeType.STATION: "WiFi client (802.11)",
+        NodeType.ACCESS_POINT: "WiFi access point",
     }
     
     def __init__(self, node_type: NodeType, parent=None):
