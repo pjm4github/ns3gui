@@ -505,6 +505,7 @@ class NodePropertiesWidget(QWidget):
         self._type_combo.addItem("Switch", NodeType.SWITCH)
         self._type_combo.addItem("WiFi Station", NodeType.STATION)
         self._type_combo.addItem("Access Point", NodeType.ACCESS_POINT)
+        self._type_combo.addItem("Socket Application", NodeType.APPLICATION)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         self._type_combo.setStyleSheet(input_style())
         form.addRow("Type:", self._type_combo)
@@ -769,6 +770,128 @@ class NodePropertiesWidget(QWidget):
         wifi_layout.addRow("TX Power:", self._wifi_tx_power_spin)
         
         self._type_settings_container.addWidget(self._wifi_widget)
+        
+        # Socket Application settings (for APPLICATION node type)
+        self._app_widget = QWidget()
+        app_layout = QFormLayout(self._app_widget)
+        app_layout.setContentsMargins(0, 0, 0, 0)
+        app_layout.setSpacing(8)
+        
+        app_header = QLabel("Socket Application Settings")
+        app_header.setStyleSheet("font-weight: bold; color: #374151; margin-top: 4px;")
+        app_layout.addRow(app_header)
+        
+        # Attached Node (which host this app runs on)
+        self._app_attached_combo = QComboBox()
+        self._app_attached_combo.setPlaceholderText("Select host node...")
+        self._app_attached_combo.currentIndexChanged.connect(self._on_app_prop_changed)
+        self._app_attached_combo.setStyleSheet(input_style())
+        app_layout.addRow("Attached To:", self._app_attached_combo)
+        
+        # Role (sender/receiver)
+        self._app_role_combo = QComboBox()
+        self._app_role_combo.addItem("Sender (Client)", "sender")
+        self._app_role_combo.addItem("Receiver (Server)", "receiver")
+        self._app_role_combo.currentIndexChanged.connect(self._on_app_prop_changed)
+        self._app_role_combo.setStyleSheet(input_style())
+        app_layout.addRow("Role:", self._app_role_combo)
+        
+        # Protocol
+        self._app_protocol_combo = QComboBox()
+        self._app_protocol_combo.addItem("UDP", "UDP")
+        self._app_protocol_combo.addItem("TCP", "TCP")
+        self._app_protocol_combo.currentIndexChanged.connect(self._on_app_prop_changed)
+        self._app_protocol_combo.setStyleSheet(input_style())
+        app_layout.addRow("Protocol:", self._app_protocol_combo)
+        
+        # Remote Address (for sender)
+        self._app_remote_addr_edit = QLineEdit()
+        self._app_remote_addr_edit.setPlaceholderText("e.g., 10.1.1.2")
+        self._app_remote_addr_edit.textChanged.connect(self._on_app_prop_changed)
+        self._app_remote_addr_edit.setStyleSheet(input_style())
+        app_layout.addRow("Remote Address:", self._app_remote_addr_edit)
+        
+        # Remote/Local Port
+        self._app_port_spin = QSpinBox()
+        self._app_port_spin.setRange(1, 65535)
+        self._app_port_spin.setValue(9000)
+        self._app_port_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_port_spin.setStyleSheet(input_style())
+        app_layout.addRow("Port:", self._app_port_spin)
+        
+        # Payload settings header
+        payload_header = QLabel("Payload Configuration")
+        payload_header.setStyleSheet("font-weight: bold; color: #6B7280; margin-top: 8px;")
+        app_layout.addRow(payload_header)
+        
+        # Payload Type
+        self._app_payload_type_combo = QComboBox()
+        self._app_payload_type_combo.addItem("Custom Pattern", "pattern")
+        self._app_payload_type_combo.addItem("Random Data", "random")
+        self._app_payload_type_combo.addItem("Sequence (0,1,2...)", "sequence")
+        self._app_payload_type_combo.currentIndexChanged.connect(self._on_app_prop_changed)
+        self._app_payload_type_combo.setStyleSheet(input_style())
+        app_layout.addRow("Payload Type:", self._app_payload_type_combo)
+        
+        # Payload Data (for pattern)
+        self._app_payload_edit = QLineEdit()
+        self._app_payload_edit.setPlaceholderText("Custom payload string or hex (0x...)")
+        self._app_payload_edit.textChanged.connect(self._on_app_prop_changed)
+        self._app_payload_edit.setStyleSheet(input_style())
+        app_layout.addRow("Payload Data:", self._app_payload_edit)
+        
+        # Payload Size
+        self._app_payload_size_spin = QSpinBox()
+        self._app_payload_size_spin.setRange(1, 65535)
+        self._app_payload_size_spin.setValue(512)
+        self._app_payload_size_spin.setSuffix(" bytes")
+        self._app_payload_size_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_payload_size_spin.setStyleSheet(input_style())
+        app_layout.addRow("Packet Size:", self._app_payload_size_spin)
+        
+        # Send Count
+        self._app_send_count_spin = QSpinBox()
+        self._app_send_count_spin.setRange(0, 1000000)
+        self._app_send_count_spin.setValue(10)
+        self._app_send_count_spin.setSpecialValueText("Unlimited")
+        self._app_send_count_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_send_count_spin.setStyleSheet(input_style())
+        app_layout.addRow("Send Count:", self._app_send_count_spin)
+        
+        # Send Interval
+        self._app_interval_spin = QDoubleSpinBox()
+        self._app_interval_spin.setRange(0.001, 60.0)
+        self._app_interval_spin.setValue(1.0)
+        self._app_interval_spin.setSuffix(" sec")
+        self._app_interval_spin.setDecimals(3)
+        self._app_interval_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_interval_spin.setStyleSheet(input_style())
+        app_layout.addRow("Send Interval:", self._app_interval_spin)
+        
+        # Timing header
+        timing_header = QLabel("Timing")
+        timing_header.setStyleSheet("font-weight: bold; color: #6B7280; margin-top: 8px;")
+        app_layout.addRow(timing_header)
+        
+        # Start Time
+        self._app_start_time_spin = QDoubleSpinBox()
+        self._app_start_time_spin.setRange(0.0, 1000.0)
+        self._app_start_time_spin.setValue(1.0)
+        self._app_start_time_spin.setSuffix(" sec")
+        self._app_start_time_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_start_time_spin.setStyleSheet(input_style())
+        app_layout.addRow("Start Time:", self._app_start_time_spin)
+        
+        # Stop Time
+        self._app_stop_time_spin = QDoubleSpinBox()
+        self._app_stop_time_spin.setRange(0.0, 1000.0)
+        self._app_stop_time_spin.setValue(9.0)
+        self._app_stop_time_spin.setSuffix(" sec")
+        self._app_stop_time_spin.valueChanged.connect(self._on_app_prop_changed)
+        self._app_stop_time_spin.setStyleSheet(input_style())
+        app_layout.addRow("Stop Time:", self._app_stop_time_spin)
+        
+        self._type_settings_container.addWidget(self._app_widget)
     
     def set_node(self, node: Optional[NodeModel]):
         # Only rebuild if it's a different node
@@ -789,6 +912,7 @@ class NodePropertiesWidget(QWidget):
         self._router_widget.hide()
         self._switch_widget.hide()
         self._wifi_widget.hide()
+        self._app_widget.hide()
         
         if not self._node:
             self._name_edit.clear()
@@ -911,6 +1035,85 @@ class NodePropertiesWidget(QWidget):
             self._wifi_tx_power_spin.blockSignals(True)
             self._wifi_tx_power_spin.setValue(getattr(self._node, 'wifi_tx_power', 20.0))
             self._wifi_tx_power_spin.blockSignals(False)
+        
+        elif self._node.node_type == NodeType.APPLICATION:
+            self._app_widget.show()
+            self._update_app_attached_combo()
+            
+            # Attached node
+            self._app_attached_combo.blockSignals(True)
+            attached_id = getattr(self._node, 'app_attached_node_id', '')
+            idx = self._app_attached_combo.findData(attached_id)
+            self._app_attached_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._app_attached_combo.blockSignals(False)
+            
+            # Role
+            self._app_role_combo.blockSignals(True)
+            role = getattr(self._node, 'app_role', 'sender')
+            idx = self._app_role_combo.findData(role)
+            self._app_role_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._app_role_combo.blockSignals(False)
+            
+            # Protocol
+            self._app_protocol_combo.blockSignals(True)
+            proto = getattr(self._node, 'app_protocol', 'UDP')
+            idx = self._app_protocol_combo.findData(proto)
+            self._app_protocol_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._app_protocol_combo.blockSignals(False)
+            
+            # Remote Address
+            self._app_remote_addr_edit.blockSignals(True)
+            self._app_remote_addr_edit.setText(getattr(self._node, 'app_remote_address', ''))
+            self._app_remote_addr_edit.blockSignals(False)
+            
+            # Port
+            self._app_port_spin.blockSignals(True)
+            port = getattr(self._node, 'app_remote_port', 9000)
+            self._app_port_spin.setValue(port)
+            self._app_port_spin.blockSignals(False)
+            
+            # Payload Type
+            self._app_payload_type_combo.blockSignals(True)
+            ptype = getattr(self._node, 'app_payload_type', 'pattern')
+            idx = self._app_payload_type_combo.findData(ptype)
+            self._app_payload_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._app_payload_type_combo.blockSignals(False)
+            
+            # Payload Data
+            self._app_payload_edit.blockSignals(True)
+            self._app_payload_edit.setText(getattr(self._node, 'app_payload_data', ''))
+            self._app_payload_edit.blockSignals(False)
+            
+            # Payload Size
+            self._app_payload_size_spin.blockSignals(True)
+            self._app_payload_size_spin.setValue(getattr(self._node, 'app_payload_size', 512))
+            self._app_payload_size_spin.blockSignals(False)
+            
+            # Send Count
+            self._app_send_count_spin.blockSignals(True)
+            self._app_send_count_spin.setValue(getattr(self._node, 'app_send_count', 10))
+            self._app_send_count_spin.blockSignals(False)
+            
+            # Send Interval
+            self._app_interval_spin.blockSignals(True)
+            self._app_interval_spin.setValue(getattr(self._node, 'app_send_interval', 1.0))
+            self._app_interval_spin.blockSignals(False)
+            
+            # Start/Stop Time
+            self._app_start_time_spin.blockSignals(True)
+            self._app_start_time_spin.setValue(getattr(self._node, 'app_start_time', 1.0))
+            self._app_start_time_spin.blockSignals(False)
+            
+            self._app_stop_time_spin.blockSignals(True)
+            self._app_stop_time_spin.setValue(getattr(self._node, 'app_stop_time', 9.0))
+            self._app_stop_time_spin.blockSignals(False)
+            
+            # Show/hide fields based on role
+            is_sender = (getattr(self._node, 'app_role', 'sender') == 'sender')
+            self._app_remote_addr_edit.setEnabled(is_sender)
+            self._app_payload_edit.setEnabled(is_sender)
+            self._app_send_count_spin.setEnabled(is_sender)
+            self._app_interval_spin.setEnabled(is_sender)
     
     def _on_name_changed(self, text):
         if self._node:
@@ -964,6 +1167,60 @@ class NodePropertiesWidget(QWidget):
             self._node.wifi_channel = self._wifi_channel_spin.value()
             self._node.wifi_band = self._wifi_band_combo.currentData()
             self._node.wifi_tx_power = self._wifi_tx_power_spin.value()
+            self.propertiesChanged.emit()
+    
+    def _update_app_attached_combo(self):
+        """Update the attached node combo with available host nodes."""
+        self._app_attached_combo.blockSignals(True)
+        current_data = self._app_attached_combo.currentData()
+        self._app_attached_combo.clear()
+        self._app_attached_combo.addItem("(Not attached)", "")
+        
+        # Get network model to find host nodes
+        # Walk up to find the main window and get the network
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, 'network'):
+                network = parent.network
+                for node_id, node in network.nodes.items():
+                    # Only show hosts and stations as valid attachment points
+                    if node.node_type in (NodeType.HOST, NodeType.STATION) and node_id != self._node.id:
+                        self._app_attached_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
+                break
+            parent = parent.parent()
+        
+        # Restore selection
+        if current_data:
+            idx = self._app_attached_combo.findData(current_data)
+            if idx >= 0:
+                self._app_attached_combo.setCurrentIndex(idx)
+        
+        self._app_attached_combo.blockSignals(False)
+    
+    def _on_app_prop_changed(self):
+        """Handle socket application property changes."""
+        if self._node and self._node.node_type == NodeType.APPLICATION:
+            self._node.app_attached_node_id = self._app_attached_combo.currentData() or ""
+            self._node.app_role = self._app_role_combo.currentData()
+            self._node.app_protocol = self._app_protocol_combo.currentData()
+            self._node.app_remote_address = self._app_remote_addr_edit.text()
+            self._node.app_remote_port = self._app_port_spin.value()
+            self._node.app_local_port = self._app_port_spin.value()
+            self._node.app_payload_type = self._app_payload_type_combo.currentData()
+            self._node.app_payload_data = self._app_payload_edit.text()
+            self._node.app_payload_size = self._app_payload_size_spin.value()
+            self._node.app_send_count = self._app_send_count_spin.value()
+            self._node.app_send_interval = self._app_interval_spin.value()
+            self._node.app_start_time = self._app_start_time_spin.value()
+            self._node.app_stop_time = self._app_stop_time_spin.value()
+            
+            # Update UI based on role
+            is_sender = (self._node.app_role == 'sender')
+            self._app_remote_addr_edit.setEnabled(is_sender)
+            self._app_payload_edit.setEnabled(is_sender)
+            self._app_send_count_spin.setEnabled(is_sender)
+            self._app_interval_spin.setEnabled(is_sender)
+            
             self.propertiesChanged.emit()
     
     def _on_subnet_changed(self):

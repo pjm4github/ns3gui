@@ -1109,13 +1109,23 @@ def main():
                 lines.extend(self._generate_bulk_send_application(
                     flow_idx, flow, source_idx, target_idx, network
                 ))
+            elif flow.application == TrafficApplication.CUSTOM_SOCKET:
+                lines.extend(self._generate_custom_socket_application(
+                    flow_idx, flow, source_idx, target_idx, network
+                ))
             else:
                 # Stub for other application types (ping, etc.)
                 lines.extend([
                     f"    # TODO: {flow.application.value} application not yet implemented",
-                    f"    # Supported types: echo, onoff, bulk_send",
+                    f"    # Supported types: echo, onoff, bulk_send, socket",
                     "",
                 ])
+        
+        # Generate socket applications from APPLICATION nodes
+        app_lines = self._generate_application_node_sockets(network)
+        if app_lines:
+            lines.append("")
+            lines.extend(app_lines)
         
         return "\n".join(lines)
     
@@ -1348,6 +1358,276 @@ def main():
         
         return target_link_idx, interface_idx
     
+    def _generate_custom_socket_application(
+        self, 
+        flow_idx: int, 
+        flow: TrafficFlow, 
+        source_idx: int, 
+        target_idx: int,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate custom socket-based application with custom payload."""
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: Cannot find interface for target node", ""]
+        
+        port = flow.port if flow.port else 9000 + flow_idx
+        packet_size = flow.packet_size or 512
+        send_count = getattr(flow, 'socket_send_count', 10)
+        send_interval = getattr(flow, 'socket_send_interval', 1.0)
+        payload_type = getattr(flow, 'socket_payload_type', 'pattern')
+        payload_pattern = getattr(flow, 'socket_payload_pattern', '')
+        
+        protocol = "UDP" if flow.protocol == TrafficProtocol.UDP else "TCP"
+        socket_factory = f"ns3::{protocol.lower().capitalize()}SocketFactory"
+        
+        lines = [
+            f"    # Custom Socket Application: {flow.name}",
+            f"    # Protocol: {protocol}, Payload: {payload_type}",
+            "",
+            "    # ----------------------------------------",
+            f"    # Socket Application {flow_idx}",
+            "    # ----------------------------------------",
+            "",
+        ]
+        
+        # Generate payload data based on type
+        if payload_type == "pattern" and payload_pattern:
+            # Check if hex format
+            if payload_pattern.startswith("0x"):
+                lines.append(f"    payload_data{flow_idx} = bytes.fromhex('{payload_pattern[2:]}')")
+            else:
+                lines.append(f"    payload_data{flow_idx} = b'{payload_pattern}'")
+        elif payload_type == "sequence":
+            lines.append(f"    payload_data{flow_idx} = bytes(range(256)) * ({packet_size} // 256 + 1)")
+            lines.append(f"    payload_data{flow_idx} = payload_data{flow_idx}[:{packet_size}]")
+        else:  # random
+            lines.append(f"    import random")
+            lines.append(f"    payload_data{flow_idx} = bytes([random.randint(0, 255) for _ in range({packet_size})])")
+        
+        lines.append("")
+        
+        # Receiver socket setup
+        lines.extend([
+            f"    # Receiver socket on node {target_idx}",
+            f"    def setup_receiver{flow_idx}():",
+            f"        recv_socket = ns.Socket.CreateSocket(",
+            f"            nodes.Get({target_idx}),",
+            f"            ns.{protocol.lower().capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+            f"        local_addr = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"        recv_socket.Bind(local_addr.ConvertTo())",
+            f"        print(f'Receiver {flow_idx}: Listening on port {port}')",
+            f"        return recv_socket",
+            "",
+        ])
+        
+        # Sender socket setup and send function
+        lines.extend([
+            f"    # Sender socket on node {source_idx}",
+            f"    target_addr{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    print(f'Flow {flow_idx} ({flow.name}): Socket sender to {{target_addr{flow_idx}}}:{port}')",
+            "",
+            f"    send_socket{flow_idx} = None",
+            f"    packets_sent{flow_idx} = [0]  # Use list for closure",
+            "",
+            f"    def setup_sender{flow_idx}():",
+            f"        global send_socket{flow_idx}",
+            f"        send_socket{flow_idx} = ns.Socket.CreateSocket(",
+            f"            nodes.Get({source_idx}),",
+            f"            ns.{protocol.lower().capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+            f"        remote_addr = ns.InetSocketAddress(target_addr{flow_idx}, {port})",
+            f"        send_socket{flow_idx}.Connect(remote_addr.ConvertTo())",
+            f"        print(f'Sender {flow_idx}: Connected to {{target_addr{flow_idx}}}:{port}')",
+            "",
+        ])
+        
+        # Send packet function
+        lines.extend([
+            f"    def send_packet{flow_idx}():",
+            f"        if send_socket{flow_idx} is None:",
+            f"            return",
+        ])
+        
+        if send_count > 0:
+            lines.extend([
+                f"        if packets_sent{flow_idx}[0] >= {send_count}:",
+                f"            return",
+            ])
+        
+        lines.extend([
+            f"        packet = ns.Packet(payload_data{flow_idx}, len(payload_data{flow_idx}))",
+            f"        send_socket{flow_idx}.Send(packet)",
+            f"        packets_sent{flow_idx}[0] += 1",
+            f"        print(f'Flow {flow_idx}: Sent packet {{packets_sent{flow_idx}[0]}} ({{len(payload_data{flow_idx})}} bytes)')",
+        ])
+        
+        if send_count > 0:
+            lines.append(f"        if packets_sent{flow_idx}[0] < {send_count}:")
+            lines.append(f"            ns.Simulator.Schedule(ns.Seconds({send_interval}), send_packet{flow_idx})")
+        else:
+            lines.append(f"        ns.Simulator.Schedule(ns.Seconds({send_interval}), send_packet{flow_idx})")
+        
+        lines.append("")
+        
+        # Schedule setup and first packet
+        lines.extend([
+            f"    # Schedule socket setup and transmission",
+            f"    ns.Simulator.Schedule(ns.Seconds({max(0, flow.start_time - 0.5)}), setup_receiver{flow_idx})",
+            f"    ns.Simulator.Schedule(ns.Seconds({flow.start_time - 0.1}), setup_sender{flow_idx})",
+            f"    ns.Simulator.Schedule(ns.Seconds({flow.start_time}), send_packet{flow_idx})",
+            "",
+        ])
+        
+        return lines
+    
+    def _generate_application_node_sockets(self, network: NetworkModel) -> list[str]:
+        """Generate socket applications from APPLICATION nodes in the topology."""
+        lines = []
+        
+        # Find all APPLICATION nodes
+        app_nodes = [
+            (node_id, node) for node_id, node in network.nodes.items()
+            if node.node_type == NodeType.APPLICATION
+        ]
+        
+        if not app_nodes:
+            return lines
+        
+        lines.extend([
+            "    # ----------------------------------------",
+            "    # Socket Applications from Topology",
+            "    # ----------------------------------------",
+            "",
+        ])
+        
+        for app_idx, (node_id, app_node) in enumerate(app_nodes):
+            # Get attached host node
+            attached_id = getattr(app_node, 'app_attached_node_id', '')
+            if not attached_id:
+                lines.append(f"    # {app_node.name}: SKIPPED - not attached to any host")
+                continue
+            
+            attached_node = network.nodes.get(attached_id)
+            if not attached_node:
+                lines.append(f"    # {app_node.name}: SKIPPED - attached node not found")
+                continue
+            
+            host_idx = self._node_index_map.get(attached_id)
+            if host_idx is None:
+                lines.append(f"    # {app_node.name}: SKIPPED - attached node not in node map")
+                continue
+            
+            role = getattr(app_node, 'app_role', 'sender')
+            protocol = getattr(app_node, 'app_protocol', 'UDP')
+            remote_addr = getattr(app_node, 'app_remote_address', '')
+            port = getattr(app_node, 'app_remote_port', 9000)
+            payload_type = getattr(app_node, 'app_payload_type', 'pattern')
+            payload_data = getattr(app_node, 'app_payload_data', '')
+            payload_size = getattr(app_node, 'app_payload_size', 512)
+            send_count = getattr(app_node, 'app_send_count', 10)
+            send_interval = getattr(app_node, 'app_send_interval', 1.0)
+            start_time = getattr(app_node, 'app_start_time', 1.0)
+            stop_time = getattr(app_node, 'app_stop_time', 9.0)
+            
+            lines.append(f"    # {app_node.name} ({role}) on {attached_node.name}")
+            
+            if role == "receiver":
+                # Generate receiver code
+                lines.extend([
+                    f"    def setup_app_receiver_{app_idx}():",
+                    f"        recv_sock = ns.Socket.CreateSocket(",
+                    f"            nodes.Get({host_idx}),",
+                    f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+                    f"        )",
+                    f"        local = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+                    f"        recv_sock.Bind(local.ConvertTo())",
+                    f"        print(f'{app_node.name}: Receiver listening on port {port}')",
+                    "",
+                    f"    ns.Simulator.Schedule(ns.Seconds({max(0, start_time - 0.5)}), setup_app_receiver_{app_idx})",
+                    "",
+                ])
+            else:
+                # Generate sender code
+                # Payload generation
+                if payload_type == "pattern" and payload_data:
+                    if payload_data.startswith("0x"):
+                        lines.append(f"    app_payload_{app_idx} = bytes.fromhex('{payload_data[2:]}')")
+                    else:
+                        # Escape the string for Python
+                        escaped = payload_data.replace("\\", "\\\\").replace("'", "\\'")
+                        lines.append(f"    app_payload_{app_idx} = b'{escaped}'")
+                    lines.append(f"    # Pad or truncate to {payload_size} bytes")
+                    lines.append(f"    app_payload_{app_idx} = (app_payload_{app_idx} * ({payload_size} // len(app_payload_{app_idx}) + 1))[:{payload_size}]")
+                elif payload_type == "sequence":
+                    lines.append(f"    app_payload_{app_idx} = bytes(range(256)) * ({payload_size} // 256 + 1)")
+                    lines.append(f"    app_payload_{app_idx} = app_payload_{app_idx}[:{payload_size}]")
+                else:  # random or default
+                    lines.append(f"    app_payload_{app_idx} = bytes([i % 256 for i in range({payload_size})])")
+                
+                lines.append("")
+                
+                # Sender setup
+                lines.extend([
+                    f"    app_socket_{app_idx} = None",
+                    f"    app_sent_{app_idx} = [0]",
+                    "",
+                    f"    def setup_app_sender_{app_idx}():",
+                    f"        global app_socket_{app_idx}",
+                    f"        app_socket_{app_idx} = ns.Socket.CreateSocket(",
+                    f"            nodes.Get({host_idx}),",
+                    f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+                    f"        )",
+                ])
+                
+                if remote_addr:
+                    lines.extend([
+                        f"        remote = ns.InetSocketAddress(ns.Ipv4Address('{remote_addr}'), {port})",
+                        f"        app_socket_{app_idx}.Connect(remote.ConvertTo())",
+                        f"        print(f'{app_node.name}: Sender connected to {remote_addr}:{port}')",
+                    ])
+                else:
+                    lines.append(f"        print(f'{app_node.name}: WARNING - No remote address configured')")
+                
+                lines.append("")
+                
+                # Send function
+                lines.extend([
+                    f"    def app_send_{app_idx}():",
+                    f"        if app_socket_{app_idx} is None:",
+                    f"            return",
+                ])
+                
+                if send_count > 0:
+                    lines.extend([
+                        f"        if app_sent_{app_idx}[0] >= {send_count}:",
+                        f"            return",
+                    ])
+                
+                lines.extend([
+                    f"        pkt = ns.Packet(app_payload_{app_idx}, len(app_payload_{app_idx}))",
+                    f"        app_socket_{app_idx}.Send(pkt)",
+                    f"        app_sent_{app_idx}[0] += 1",
+                    f"        print(f'{app_node.name}: Sent packet {{app_sent_{app_idx}[0]}}')",
+                ])
+                
+                if send_count > 0:
+                    lines.append(f"        if app_sent_{app_idx}[0] < {send_count}:")
+                    lines.append(f"            ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
+                else:
+                    lines.append(f"        ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
+                
+                lines.extend([
+                    "",
+                    f"    ns.Simulator.Schedule(ns.Seconds({start_time - 0.1}), setup_app_sender_{app_idx})",
+                    f"    ns.Simulator.Schedule(ns.Seconds({start_time}), app_send_{app_idx})",
+                    "",
+                ])
+        
+        return lines
+
     def _generate_tracing(self, sim_config: SimulationConfig, output_dir: str) -> str:
         """Generate tracing/logging code."""
         lines = [

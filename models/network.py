@@ -23,6 +23,7 @@ class NodeType(Enum):
     SWITCH = auto()       # Layer 2 device (also used to visualize CSMA segments)
     STATION = auto()      # WiFi station (wireless client)
     ACCESS_POINT = auto() # WiFi access point
+    APPLICATION = auto()  # Socket application feed point (attaches to host)
 
 
 class MediumType(Enum):
@@ -188,6 +189,10 @@ DEFAULT_PORT_CONFIGS = {
         "num_ports": 2,  # 1 wireless + 1 wired uplink
         "port_type": PortType.WIRELESS,
     },
+    NodeType.APPLICATION: {
+        "num_ports": 1,  # Virtual port to attach to host
+        "port_type": PortType.GIGABIT_ETHERNET,
+    },
 }
 
 
@@ -290,6 +295,22 @@ class NodeModel:
     wifi_channel: int = 1           # WiFi channel number (1-11 for 2.4GHz, 36-165 for 5GHz)
     wifi_band: str = "2.4GHz"       # 2.4GHz or 5GHz
     wifi_tx_power: float = 20.0     # Transmit power in dBm
+    
+    # Socket Application properties (for APPLICATION node type)
+    # These define a custom socket-based packet sender/receiver
+    app_attached_node_id: str = ""       # ID of host node this app attaches to
+    app_role: str = "sender"             # "sender" or "receiver"
+    app_protocol: str = "UDP"            # "UDP" or "TCP"
+    app_remote_address: str = ""         # Destination IP (for sender)
+    app_remote_port: int = 9000          # Destination port
+    app_local_port: int = 9000           # Local port (for receiver)
+    app_payload_type: str = "pattern"    # "pattern", "file", "callback"
+    app_payload_data: str = ""           # Payload pattern or file path
+    app_payload_size: int = 512          # Packet payload size in bytes
+    app_send_count: int = 10             # Number of packets to send (0 = unlimited)
+    app_send_interval: float = 1.0       # Interval between sends (seconds)
+    app_start_time: float = 1.0          # Application start time
+    app_stop_time: float = 9.0           # Application stop time
     
     # Routing table (for hosts and routers)
     routing_mode: RoutingMode = RoutingMode.AUTO

@@ -33,6 +33,7 @@ class TrafficApplication(Enum):
     ONOFF = "onoff"         # Constant bitrate with on/off periods
     BULK_SEND = "bulk"      # TCP bulk transfer
     PING = "ping"           # ICMP ping
+    CUSTOM_SOCKET = "socket"  # Custom socket-based application with payload
 
 
 @dataclass
@@ -67,6 +68,13 @@ class TrafficFlow:
     # Echo-specific
     echo_packets: int = 10        # Number of packets to send
     echo_interval: float = 1.0    # Interval between packets
+    
+    # Custom Socket-specific
+    socket_payload_type: str = "pattern"  # "pattern", "random", "sequence"
+    socket_payload_pattern: str = ""       # Custom payload data (hex or string)
+    socket_payload_format: str = "string"  # "string", "hex", "json"
+    socket_send_count: int = 10            # Number of packets to send (0 = continuous)
+    socket_send_interval: float = 1.0      # Interval between sends
     
     def __post_init__(self):
         if not self.name:

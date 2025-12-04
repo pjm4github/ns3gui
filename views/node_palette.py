@@ -31,6 +31,7 @@ class NodeTypeButton(QPushButton):
         NodeType.SWITCH: "#50C878",
         NodeType.STATION: "#FF9500",      # Orange for WiFi station
         NodeType.ACCESS_POINT: "#FF3B30", # Red for access point
+        NodeType.APPLICATION: "#E91E63",  # Pink for socket application
     }
     
     ICONS = {
@@ -39,6 +40,7 @@ class NodeTypeButton(QPushButton):
         NodeType.SWITCH: "S",
         NodeType.STATION: "📶",    # WiFi symbol or W
         NodeType.ACCESS_POINT: "AP",
+        NodeType.APPLICATION: "⚡",  # Lightning bolt for packet injection
     }
     
     DESCRIPTIONS = {
@@ -47,6 +49,7 @@ class NodeTypeButton(QPushButton):
         NodeType.SWITCH: "L2 network switch",
         NodeType.STATION: "WiFi client (802.11)",
         NodeType.ACCESS_POINT: "WiFi access point",
+        NodeType.APPLICATION: "Socket packet feed point",
     }
     
     def __init__(self, node_type: NodeType, parent=None):

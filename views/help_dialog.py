@@ -1236,6 +1236,81 @@ sinkApps = sink.Install(node)
             <tr><td><code>InetSocketAddress(port)</code></td><td>Any address + port</td></tr>
             <tr><td><code>.ConvertTo()</code></td><td>Convert to Address type</td></tr>
         </table>
+        
+        <h2>Custom Socket Application (Advanced)</h2>
+        <p>For sending custom application payloads, use the raw socket API directly.
+        The GUI provides a Socket Application node type that generates socket-based code.</p>
+        
+        <div class="tip">
+            <strong>GUI Tip:</strong> Add a "Socket Application" node from the palette and 
+            attach it to a host node. Configure the payload, protocol, and timing in the 
+            Property Panel.
+        </div>
+        
+        <h3>Socket API</h3>
+        <table>
+            <tr><th>Method</th><th>Description</th></tr>
+            <tr><td><code>Socket.CreateSocket(node, typeId)</code></td><td>Create socket on node</td></tr>
+            <tr><td><code>socket.Bind(address)</code></td><td>Bind to local address/port</td></tr>
+            <tr><td><code>socket.Connect(address)</code></td><td>Connect to remote (TCP) or set default dest (UDP)</td></tr>
+            <tr><td><code>socket.Send(packet)</code></td><td>Send packet to connected address</td></tr>
+            <tr><td><code>socket.SendTo(packet, flags, address)</code></td><td>Send to specific address</td></tr>
+            <tr><td><code>socket.Recv()</code></td><td>Receive packet</td></tr>
+            <tr><td><code>socket.Close()</code></td><td>Close socket</td></tr>
+        </table>
+        
+        <h3>Packet API</h3>
+        <table>
+            <tr><th>Method</th><th>Description</th></tr>
+            <tr><td><code>Packet(size)</code></td><td>Create packet of size bytes (zeros)</td></tr>
+            <tr><td><code>Packet(buffer, size)</code></td><td>Create packet from byte buffer</td></tr>
+            <tr><td><code>packet.GetSize()</code></td><td>Get packet size</td></tr>
+            <tr><td><code>packet.CopyData(buffer, size)</code></td><td>Copy packet data to buffer</td></tr>
+        </table>
+        
+        <h3>Example: Custom Socket Sender</h3>
+        <pre>
+# Create a custom payload
+payload = b'{"sensor": "temp", "value": 23.5}'
+
+# Create UDP socket on sender node
+socket = ns.Socket.CreateSocket(
+    nodes.Get(0),
+    ns.UdpSocketFactory.GetTypeId()
+)
+
+# Connect to receiver
+remote = ns.InetSocketAddress(destAddr, 9000)
+socket.Connect(remote.ConvertTo())
+
+# Send packet with custom payload
+packet = ns.Packet(payload, len(payload))
+socket.Send(packet)
+        </pre>
+        
+        <h3>Example: Socket Receiver</h3>
+        <pre>
+# Create socket on receiver node
+recv_socket = ns.Socket.CreateSocket(
+    nodes.Get(1),
+    ns.UdpSocketFactory.GetTypeId()
+)
+
+# Bind to listen port
+local = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), 9000)
+recv_socket.Bind(local.ConvertTo())
+
+# Note: For callbacks in Python, you may need to poll
+# or use ns-3's scheduling system
+        </pre>
+        
+        <h3>Payload Types in GUI</h3>
+        <table>
+            <tr><th>Type</th><th>Description</th><th>Example</th></tr>
+            <tr><td>Custom Pattern</td><td>Your own string or hex data</td><td><code>Hello World</code> or <code>0xDEADBEEF</code></td></tr>
+            <tr><td>Random Data</td><td>Random bytes</td><td>Auto-generated</td></tr>
+            <tr><td>Sequence</td><td>Sequential bytes (0,1,2...255,0,1...)</td><td>Auto-generated</td></tr>
+        </table>
         """
         return self._create_scroll_content(content)
     
