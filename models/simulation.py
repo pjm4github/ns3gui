@@ -76,6 +76,10 @@ class TrafficFlow:
     socket_send_count: int = 10            # Number of packets to send (0 = continuous)
     socket_send_interval: float = 1.0      # Interval between sends
     
+    # Application Node integration
+    app_enabled: bool = False              # Use attached APPLICATION node for this flow
+    app_node_id: str = ""                  # ID of the APPLICATION node to use
+    
     def __post_init__(self):
         if not self.name:
             self.name = f"flow_{self.id[:4]}"

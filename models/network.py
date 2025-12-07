@@ -55,6 +55,7 @@ class ChannelType(Enum):
     - POINT_TO_POINT: Dedicated link between exactly 2 nodes (like a cable)
     - CSMA: Shared medium where multiple nodes share bandwidth (like Ethernet hub)
     - WIFI: 802.11 wireless channel
+    - APPLICATION_ATTACH: Virtual connection from APPLICATION node to its host
     
     In ns-3, CSMA uses Carrier Sense Multiple Access protocol where nodes
     listen before transmitting to avoid collisions.
@@ -62,6 +63,7 @@ class ChannelType(Enum):
     POINT_TO_POINT = auto()  # Dedicated point-to-point link
     CSMA = auto()            # Carrier Sense Multiple Access (shared medium)
     WIFI = auto()            # 802.11 WiFi wireless
+    APPLICATION_ATTACH = auto()  # Virtual link from APPLICATION to host node
 
 
 class RoutingMode(Enum):
@@ -311,6 +313,7 @@ class NodeModel:
     app_send_interval: float = 1.0       # Interval between sends (seconds)
     app_start_time: float = 1.0          # Application start time
     app_stop_time: float = 9.0           # Application stop time
+    app_script_path: str = ""            # Path to custom Python script
     
     # Routing table (for hosts and routers)
     routing_mode: RoutingMode = RoutingMode.AUTO
@@ -554,12 +557,36 @@ class NetworkModel:
         Create and add a link between two nodes.
         
         If port IDs are not specified, automatically selects available ports.
+        If one node is an APPLICATION node, creates an APPLICATION_ATTACH link
+        and sets up the attachment relationship.
         """
         if source_id not in self.nodes or target_id not in self.nodes:
             return None
         
         source_node = self.nodes[source_id]
         target_node = self.nodes[target_id]
+        
+        # Check if this is an APPLICATION attachment
+        app_node = None
+        host_node = None
+        
+        if source_node.node_type == NodeType.APPLICATION:
+            app_node = source_node
+            host_node = target_node
+        elif target_node.node_type == NodeType.APPLICATION:
+            app_node = target_node
+            host_node = source_node
+        
+        if app_node:
+            # APPLICATION_ATTACH link - validate host is a valid target
+            if host_node.node_type not in (NodeType.HOST, NodeType.STATION, NodeType.ROUTER):
+                return None  # Can only attach to hosts, stations, or routers
+            
+            # Set the attachment relationship
+            app_node.app_attached_node_id = host_node.id
+            
+            # Use APPLICATION_ATTACH channel type
+            channel_type = ChannelType.APPLICATION_ATTACH
         
         # Find or validate ports
         if source_port_id:
@@ -601,8 +628,9 @@ class NetworkModel:
         source_port.connected_link_id = link.id
         target_port.connected_link_id = link.id
         
-        # Auto-assign IP addresses based on topology
-        self._assign_ip_addresses(source_node, source_port, target_node, target_port)
+        # Auto-assign IP addresses based on topology (skip for APPLICATION_ATTACH)
+        if channel_type != ChannelType.APPLICATION_ATTACH:
+            self._assign_ip_addresses(source_node, source_port, target_node, target_port)
         
         return link
     
@@ -721,12 +749,18 @@ class NetworkModel:
             if port:
                 port.connected_link_id = None
                 port.ip_address = ""
+            # If this is an APPLICATION node, clear its attachment
+            if source_node.node_type == NodeType.APPLICATION:
+                source_node.app_attached_node_id = ""
         
         if target_node:
             port = target_node.get_port(link.target_port_id)
             if port:
                 port.connected_link_id = None
                 port.ip_address = ""
+            # If this is an APPLICATION node, clear its attachment
+            if target_node.node_type == NodeType.APPLICATION:
+                target_node.app_attached_node_id = ""
         
         return self.links.pop(link_id)
     

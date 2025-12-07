@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QDockWidget, QMenuBar, QMenu, QFileDialog,
     QDialog, QFormLayout, QLineEdit, QSpinBox,
     QDoubleSpinBox, QComboBox, QDialogButtonBox,
-    QGroupBox, QListWidget, QListWidgetItem
+    QGroupBox, QListWidget, QListWidgetItem, QCheckBox
 )
 
 from models import (
@@ -575,6 +575,9 @@ class MainWindow(QMainWindow):
         # Scene medium type change -> property panel update
         self.canvas.topology_scene.mediumTypeChanged.connect(self._on_scene_medium_type_changed)
         
+        # Application node double-click -> open script editor
+        self.canvas.topology_scene.applicationNodeDoubleClicked.connect(self._on_application_node_double_clicked)
+        
         # Property changes -> Canvas update
         self.property_panel.propertiesChanged.connect(self._on_properties_changed)
         
@@ -711,6 +714,42 @@ class MainWindow(QMainWindow):
         self.property_panel.refresh()
         medium_name = new_medium.name.replace('_', ' ').title() if hasattr(new_medium, 'name') else str(new_medium)
         self.statusBar().showMessage(f"Changed medium type to {medium_name}", 2000)
+    
+    def _on_application_node_double_clicked(self, node_id: str):
+        """Handle double-click on APPLICATION node - open script editor."""
+        from views.socket_app_editor import SocketAppEditorDialog
+        
+        node = self.network_model.get_node(node_id)
+        if not node or node.node_type != NodeType.APPLICATION:
+            return
+        
+        # Get scripts directory from settings
+        scripts_dir = self._get_scripts_dir()
+        
+        # Open the editor dialog
+        dialog = SocketAppEditorDialog(node, scripts_dir, self)
+        dialog.scriptSaved.connect(self._on_app_script_saved)
+        dialog.exec()
+    
+    def _get_scripts_dir(self) -> str:
+        """Get the directory for socket application scripts from settings."""
+        from services.settings_manager import get_settings
+        
+        settings = get_settings()
+        scripts_path = settings.get_scripts_dir()
+        
+        # Ensure directory exists
+        scripts_path.mkdir(parents=True, exist_ok=True)
+        
+        return str(scripts_path)
+    
+    def _on_app_script_saved(self, node_id: str, script_path: str):
+        """Handle script saved for application node."""
+        node = self.network_model.get_node(node_id)
+        if node:
+            # Store script path reference in node (for code generation)
+            node.app_script_path = script_path
+            self.statusBar().showMessage(f"Saved script: {script_path}", 3000)
     
     def _on_subnet_applied(self, switch_id: str):
         """Handle subnet application to connected hosts."""
@@ -1934,7 +1973,7 @@ class FlowEditorDialog(QDialog):
     
     def _setup_ui(self):
         self.setWindowTitle("Edit Traffic Flow" if self._flow.source_node_id else "Add Traffic Flow")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450)
         
         layout = QFormLayout(self)
         
@@ -1942,21 +1981,24 @@ class FlowEditorDialog(QDialog):
         self._name_edit = QLineEdit(self._flow.name)
         layout.addRow("Name:", self._name_edit)
         
-        # Source node
+        # Source node (filter out APPLICATION nodes)
         self._source_combo = QComboBox()
         for node_id, node in self._network.nodes.items():
-            self._source_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
+            if node.node_type != NodeType.APPLICATION:
+                self._source_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
         
         if self._flow.source_node_id:
             idx = self._source_combo.findData(self._flow.source_node_id)
             if idx >= 0:
                 self._source_combo.setCurrentIndex(idx)
+        self._source_combo.currentIndexChanged.connect(self._update_app_node_combo)
         layout.addRow("Source Node:", self._source_combo)
         
-        # Target node
+        # Target node (filter out APPLICATION nodes)
         self._target_combo = QComboBox()
         for node_id, node in self._network.nodes.items():
-            self._target_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
+            if node.node_type != NodeType.APPLICATION:
+                self._target_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
         
         if self._flow.target_node_id:
             idx = self._target_combo.findData(self._flow.target_node_id)
@@ -1964,16 +2006,51 @@ class FlowEditorDialog(QDialog):
                 self._target_combo.setCurrentIndex(idx)
         layout.addRow("Target Node:", self._target_combo)
         
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("background: #E5E7EB; margin: 8px 0;")
+        layout.addRow(separator)
+        
+        # Application Node toggle
+        self._app_enabled_check = QCheckBox("Use Socket Application Node")
+        self._app_enabled_check.setChecked(self._flow.app_enabled)
+        self._app_enabled_check.setToolTip(
+            "Enable to use a custom Socket Application node for this flow.\n"
+            "The application's create_payload() function will generate the traffic."
+        )
+        self._app_enabled_check.stateChanged.connect(self._on_app_enabled_changed)
+        layout.addRow(self._app_enabled_check)
+        
+        # Application node selector
+        self._app_node_combo = QComboBox()
+        self._app_node_combo.addItem("(Select Application Node)", "")
+        self._update_app_node_combo()
+        
+        if self._flow.app_node_id:
+            idx = self._app_node_combo.findData(self._flow.app_node_id)
+            if idx >= 0:
+                self._app_node_combo.setCurrentIndex(idx)
+        self._app_node_combo.setEnabled(self._flow.app_enabled)
+        layout.addRow("Application Node:", self._app_node_combo)
+        
+        # Separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("background: #E5E7EB; margin: 8px 0;")
+        layout.addRow(separator2)
+        
         # Application type
         self._app_combo = QComboBox()
         self._app_combo.addItem("UDP Echo", TrafficApplication.ECHO)
         self._app_combo.addItem("On/Off (CBR)", TrafficApplication.ONOFF)
         self._app_combo.addItem("Bulk Send (TCP)", TrafficApplication.BULK_SEND)
+        self._app_combo.addItem("Custom Socket", TrafficApplication.CUSTOM_SOCKET)
         
         idx = self._app_combo.findData(self._flow.application)
         if idx >= 0:
             self._app_combo.setCurrentIndex(idx)
-        layout.addRow("Application:", self._app_combo)
+        layout.addRow("Application Type:", self._app_combo)
         
         # Protocol
         self._proto_combo = QComboBox()
@@ -2023,6 +2100,46 @@ class FlowEditorDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+        
+        # Update UI state
+        self._on_app_enabled_changed()
+    
+    def _on_app_enabled_changed(self):
+        """Handle app_enabled checkbox change."""
+        enabled = self._app_enabled_check.isChecked()
+        self._app_node_combo.setEnabled(enabled)
+        
+        # If enabled, auto-select CUSTOM_SOCKET application type
+        if enabled:
+            idx = self._app_combo.findData(TrafficApplication.CUSTOM_SOCKET)
+            if idx >= 0:
+                self._app_combo.setCurrentIndex(idx)
+    
+    def _update_app_node_combo(self):
+        """Update the application node combo based on source node."""
+        current_selection = self._app_node_combo.currentData()
+        self._app_node_combo.clear()
+        self._app_node_combo.addItem("(Select Application Node)", "")
+        
+        source_node_id = self._source_combo.currentData()
+        
+        # Find APPLICATION nodes attached to the source node
+        for node_id, node in self._network.nodes.items():
+            if node.node_type == NodeType.APPLICATION:
+                attached_id = getattr(node, 'app_attached_node_id', '')
+                # Show all app nodes, but indicate which are attached to source
+                if attached_id == source_node_id:
+                    self._app_node_combo.addItem(f"⚡ {node.name} (attached)", node_id)
+                else:
+                    attached_node = self._network.nodes.get(attached_id)
+                    attached_name = attached_node.name if attached_node else "unattached"
+                    self._app_node_combo.addItem(f"{node.name} → {attached_name}", node_id)
+        
+        # Restore selection if possible
+        if current_selection:
+            idx = self._app_node_combo.findData(current_selection)
+            if idx >= 0:
+                self._app_node_combo.setCurrentIndex(idx)
     
     def get_flow(self) -> TrafficFlow:
         """Get the configured flow."""
@@ -2036,4 +2153,6 @@ class FlowEditorDialog(QDialog):
         self._flow.echo_packets = self._packets_spin.value()
         self._flow.echo_interval = self._interval_spin.value()
         self._flow.packet_size = self._size_spin.value()
+        self._flow.app_enabled = self._app_enabled_check.isChecked()
+        self._flow.app_node_id = self._app_node_combo.currentData() or ""
         return self._flow

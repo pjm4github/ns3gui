@@ -453,7 +453,22 @@ class SimulationRunner(QObject):
     
     def _run_script_native(self, script_content: str, output_dir: str) -> bool:
         """Run script natively (Linux/macOS)."""
-        # Save script to scratch directory
+        # Save script to scripts directory from settings
+        from services.settings_manager import get_settings
+        settings = get_settings()
+        scripts_dir = settings.get_scripts_dir()
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save a copy to the scripts directory for reference
+        scripts_copy_path = scripts_dir / "simulation.py"
+        try:
+            with open(scripts_copy_path, "w") as f:
+                f.write(script_content)
+            self.output_line.emit(f"Saved script to: {scripts_copy_path}")
+        except Exception as e:
+            self.output_line.emit(f"Warning: Could not save script copy: {e}")
+        
+        # Save script to scratch directory for ns-3
         scratch_dir = os.path.join(self._ns3_path, "scratch")
         os.makedirs(scratch_dir, exist_ok=True)
         
@@ -510,7 +525,22 @@ class SimulationRunner(QObject):
         script_content = script_content.replace(output_dir, wsl_output_dir)
         script_content = script_content.replace(output_dir.replace('\\', '/'), wsl_output_dir)
         
-        # Save script to Windows temp location first
+        # Save script to scripts directory from settings
+        from services.settings_manager import get_settings
+        settings = get_settings()
+        scripts_dir = settings.get_scripts_dir()
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save a copy to the scripts directory for reference
+        scripts_copy_path = scripts_dir / "simulation.py"
+        try:
+            with open(scripts_copy_path, "w", newline='\n') as f:
+                f.write(script_content)
+            self.output_line.emit(f"Saved script to: {scripts_copy_path}")
+        except Exception as e:
+            self.output_line.emit(f"Warning: Could not save script copy: {e}")
+        
+        # Save script to Windows temp location for WSL
         script_path = os.path.join(output_dir, "gui_simulation.py")
         try:
             with open(script_path, "w", newline='\n') as f:  # Use Unix line endings

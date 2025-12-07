@@ -189,16 +189,355 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         super().hoverLeaveEvent(event)
     
     def mousePressEvent(self, event):
-        """Handle mouse press - select port on left click."""
+        """Handle mouse press - select port on left click, start link on right click."""
         if event.button() == Qt.MouseButton.LeftButton:
             # Notify scene of port selection
             scene = self.scene()
             if scene and isinstance(scene, TopologyScene):
                 scene.on_port_clicked(self)
             event.accept()
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Start link creation from this port
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                if not self.port.is_connected:
+                    scene.start_link_from_port(self)
+            event.accept()
         else:
-            # Let other buttons (including right-click) propagate to parent/canvas
             event.ignore()
+
+
+class AppPortGraphicsItem(QGraphicsRectItem):
+    """
+    Rectangular port for APPLICATION nodes and "PY" ports on host nodes.
+    
+    Shows as a small rectangle with text label (e.g., "py" or "app").
+    Can be clicked to start/complete link creation.
+    """
+    
+    PORT_WIDTH = 24
+    PORT_HEIGHT = 16
+    
+    def __init__(self, port: PortConfig, angle: float, node_radius: float, 
+                 parent_node: 'NodeGraphicsItem', is_py_port: bool = False,
+                 app_node_id: str = ""):
+        """
+        Initialize app port.
+        
+        Args:
+            port: Port configuration
+            angle: Position angle around parent node (radians)
+            node_radius: Radius of parent node
+            parent_node: Parent node graphics item
+            is_py_port: True if this is a "PY" port on a host node
+            app_node_id: ID of connected APPLICATION node (for PY ports)
+        """
+        super().__init__(
+            -self.PORT_WIDTH / 2, -self.PORT_HEIGHT / 2,
+            self.PORT_WIDTH, self.PORT_HEIGHT,
+            parent_node
+        )
+        self.port = port
+        self.parent_node = parent_node
+        self.is_py_port = is_py_port
+        self.app_node_id = app_node_id
+        self._angle = angle
+        self._node_radius = node_radius
+        self._is_selected = False
+        self._is_hovered = False
+        
+        # Position on edge of parent node
+        self._update_position()
+        
+        # Visual setup
+        self._update_appearance()
+        self._create_label()
+        
+        # Enable interactions
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+    
+    def _update_position(self):
+        """Position the port on the edge of the parent node."""
+        # Calculate position on node edge
+        x = math.cos(self._angle) * (self._node_radius + self.PORT_WIDTH / 2)
+        y = math.sin(self._angle) * (self._node_radius + self.PORT_HEIGHT / 2)
+        self.setPos(x, y)
+    
+    def _update_appearance(self):
+        """Update visual appearance based on state."""
+        if self._is_selected:
+            color = COLORS["port_selected"]
+        elif self._is_hovered:
+            color = COLORS["port_hover"]
+        elif self.is_py_port:
+            color = COLORS["link_app"]  # Pink for PY ports
+        elif self.port.is_connected:
+            color = COLORS["port_connected"]
+        else:
+            color = COLORS["port_available"]
+        
+        self.setBrush(QBrush(color))
+        self.setPen(QPen(color.darker(120), 1))
+    
+    def _create_label(self):
+        """Create the port label."""
+        if self.is_py_port:
+            label_text = "py"
+        else:
+            label_text = "app"
+        
+        self._label = QGraphicsTextItem(label_text, self)
+        font = QFont("SF Mono", 7)
+        font.setWeight(QFont.Weight.Bold)
+        self._label.setFont(font)
+        self._label.setDefaultTextColor(QColor("white"))
+        
+        # Center label
+        label_rect = self._label.boundingRect()
+        self._label.setPos(-label_rect.width() / 2, -label_rect.height() / 2)
+    
+    def set_selected(self, selected: bool):
+        """Set selection state."""
+        self._is_selected = selected
+        self._update_appearance()
+    
+    def get_scene_center(self) -> QPointF:
+        """Get the center point in scene coordinates."""
+        return self.scenePos()
+    
+    def hoverEnterEvent(self, event):
+        """Handle hover enter."""
+        self._is_hovered = True
+        self._update_appearance()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Show tooltip
+        if self.is_py_port:
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                app_node = scene.network_model.nodes.get(self.app_node_id)
+                if app_node:
+                    QToolTip.showText(event.screenPos(), 
+                        f"Application: {app_node.name}\nDouble-click to edit script")
+        else:
+            QToolTip.showText(event.screenPos(), "Application port\nDrag to connect to a host")
+        
+        super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        """Handle hover leave."""
+        self._is_hovered = False
+        self._update_appearance()
+        self.unsetCursor()
+        QToolTip.hideText()
+        super().hoverLeaveEvent(event)
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press - select port on left click, start link on right click."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                scene.on_port_clicked(self)
+            event.accept()
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Start link creation from this port (unless it's a PY port)
+            if not self.is_py_port:
+                scene = self.scene()
+                if scene and isinstance(scene, TopologyScene):
+                    if not self.port.is_connected:
+                        scene.start_link_from_port(self)
+            event.accept()
+        else:
+            event.ignore()
+    
+    def mouseDoubleClickEvent(self, event):
+        """Double-click on PY port opens script editor."""
+        if self.is_py_port and self.app_node_id:
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                scene.applicationNodeDoubleClicked.emit(self.app_node_id)
+            event.accept()
+        else:
+            event.ignore()
+
+
+class AppNodeGraphicsItem(QGraphicsRectItem):
+    """
+    Visual representation of an APPLICATION node.
+    
+    Rendered as a rectangle with dog-eared corner.
+    Has a single rectangular "app" port for connecting to hosts.
+    """
+    
+    APP_WIDTH = 70
+    APP_HEIGHT = 50
+    DOG_EAR_SIZE = 12
+    
+    def __init__(self, node_model: NodeModel, parent: Optional[QGraphicsItem] = None):
+        super().__init__(
+            -self.APP_WIDTH / 2, -self.APP_HEIGHT / 2,
+            self.APP_WIDTH, self.APP_HEIGHT,
+            parent
+        )
+        self.node_model = node_model
+        self.setPos(node_model.position.x, node_model.position.y)
+        
+        # Port graphics items (single app port)
+        self._port_items: dict[str, AppPortGraphicsItem] = {}
+        
+        # No app connectors for APPLICATION nodes themselves
+        self._app_connectors: dict[str, AppPortGraphicsItem] = {}
+        
+        # Enable interactions
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+        
+        # Visual setup
+        self._setup_appearance()
+        self._create_label()
+        self._create_icon()
+        self._create_port_indicators()
+        
+        # State
+        self._is_hovered = False
+    
+    def _setup_appearance(self):
+        """Set up colors and pen."""
+        color = COLORS[NodeType.APPLICATION]
+        self.setBrush(QBrush(color))
+        self.setPen(QPen(color.darker(120), 2))
+    
+    def paint(self, painter, option, widget=None):
+        """Draw dog-eared rectangle."""
+        painter.setBrush(self.brush())
+        painter.setPen(self.pen())
+        
+        # Define rectangle bounds
+        w, h = self.APP_WIDTH, self.APP_HEIGHT
+        ear = self.DOG_EAR_SIZE
+        
+        # Create dog-ear path
+        path = QPainterPath()
+        path.moveTo(-w/2, -h/2)  # Top-left
+        path.lineTo(w/2 - ear, -h/2)  # Top edge to dog-ear
+        path.lineTo(w/2, -h/2 + ear)  # Dog-ear diagonal
+        path.lineTo(w/2, h/2)  # Right edge
+        path.lineTo(-w/2, h/2)  # Bottom edge
+        path.closeSubpath()
+        
+        painter.drawPath(path)
+        
+        # Draw the dog-ear fold line
+        fold_pen = QPen(self.pen().color().darker(110), 1)
+        painter.setPen(fold_pen)
+        painter.drawLine(QPointF(w/2 - ear, -h/2), QPointF(w/2 - ear, -h/2 + ear))
+        painter.drawLine(QPointF(w/2 - ear, -h/2 + ear), QPointF(w/2, -h/2 + ear))
+    
+    def _create_label(self):
+        """Create the node name label."""
+        self._label = QGraphicsTextItem(self.node_model.name, self)
+        font = QFont("SF Pro Display", 9)
+        font.setWeight(QFont.Weight.Medium)
+        self._label.setFont(font)
+        self._label.setDefaultTextColor(QColor("#374151"))
+        
+        # Center label below node
+        label_rect = self._label.boundingRect()
+        self._label.setPos(-label_rect.width() / 2, self.APP_HEIGHT/2 + 8)
+    
+    def _create_icon(self):
+        """Create icon indicating node type."""
+        self._icon = QGraphicsTextItem("⚡", self)
+        font = QFont("SF Pro Display", 14)
+        font.setWeight(QFont.Weight.Bold)
+        self._icon.setFont(font)
+        self._icon.setDefaultTextColor(QColor("white"))
+        
+        # Center icon in node
+        icon_rect = self._icon.boundingRect()
+        self._icon.setPos(-icon_rect.width() / 2, -icon_rect.height() / 2)
+    
+    def _create_port_indicators(self):
+        """Create the single app port indicator."""
+        self._port_items.clear()
+        
+        # Create a single port on the bottom
+        if self.node_model.ports:
+            port = self.node_model.ports[0]
+            angle = math.pi / 2  # Bottom
+            port_item = AppPortGraphicsItem(port, angle, self.APP_HEIGHT / 2, self)
+            self._port_items[port.id] = port_item
+    
+    def get_port_item(self, port_id: str):
+        """Get the graphics item for a specific port."""
+        return self._port_items.get(port_id)
+    
+    def update_label(self):
+        """Update label text from model."""
+        self._label.setPlainText(self.node_model.name)
+        label_rect = self._label.boundingRect()
+        self._label.setPos(-label_rect.width() / 2, self.APP_HEIGHT/2 + 8)
+    
+    def update_appearance(self):
+        """Update visual appearance."""
+        self._setup_appearance()
+        self.update()
+    
+    def update_ports(self):
+        """Refresh port indicators."""
+        for port_item in self._port_items.values():
+            port_item._update_appearance()
+    
+    # Stub methods for compatibility with NodeGraphicsItem interface
+    def add_app_connector(self, app_node_id: str):
+        """APPLICATION nodes don't have app connectors."""
+        return None
+    
+    def remove_app_connector(self, app_node_id: str):
+        """APPLICATION nodes don't have app connectors."""
+        pass
+    
+    def get_app_connector(self, app_node_id: str):
+        """APPLICATION nodes don't have app connectors."""
+        return None
+    
+    def itemChange(self, change, value):
+        """Handle item changes like position updates."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            pos = self.pos()
+            self.node_model.position.x = pos.x()
+            self.node_model.position.y = pos.y()
+            
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                scene.update_links_for_node(self.node_model.id)
+        
+        return super().itemChange(change, value)
+    
+    def hoverEnterEvent(self, event):
+        """Handle hover enter."""
+        self._is_hovered = True
+        self.setPen(QPen(COLORS["hover"], 3))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        """Handle hover leave."""
+        self._is_hovered = False
+        color = COLORS[NodeType.APPLICATION]
+        self.setPen(QPen(color.darker(120), 2))
+        self.unsetCursor()
+        super().hoverLeaveEvent(event)
+    
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click - open script editor."""
+        scene = self.scene()
+        if scene and isinstance(scene, TopologyScene):
+            scene.applicationNodeDoubleClicked.emit(self.node_model.id)
+        event.accept()
 
 
 class NodeGraphicsItem(QGraphicsEllipseItem):
@@ -206,6 +545,7 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
     Visual representation of a network node with port indicators.
     
     Supports selection, dragging, and shows ports around the edge.
+    For APPLICATION nodes, use AppNodeGraphicsItem instead.
     """
     
     NODE_RADIUS = 35
@@ -219,8 +559,11 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         self.node_model = node_model
         self.setPos(node_model.position.x, node_model.position.y)
         
-        # Port graphics items
+        # Port graphics items (regular network ports)
         self._port_items: dict[str, PortGraphicsItem] = {}
+        
+        # PY port items (for attached APPLICATION nodes)
+        self._py_ports: dict[str, AppPortGraphicsItem] = {}
         
         # Enable interactions
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
@@ -242,6 +585,48 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         color = COLORS[self.node_model.node_type]
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 2))
+    
+    def add_py_port(self, app_node_id: str) -> AppPortGraphicsItem:
+        """Add a PY port for an attached APPLICATION node."""
+        if app_node_id in self._py_ports:
+            return self._py_ports[app_node_id]
+        
+        # Find angle for new PY port (at bottom, spread out)
+        num_py = len(self._py_ports)
+        base_angle = math.pi / 2  # Bottom
+        angle_offset = (num_py - len(self._py_ports) // 2) * 0.4  # Spread
+        angle = base_angle + angle_offset
+        
+        # Create a dummy port config for the PY port
+        py_port = PortConfig(
+            id=f"py_{app_node_id[:8]}",
+            port_name="py",
+            port_type=PortType.ETHERNET,  # Doesn't matter for display
+        )
+        
+        py_port_item = AppPortGraphicsItem(
+            py_port, angle, self.NODE_RADIUS, self,
+            is_py_port=True, app_node_id=app_node_id
+        )
+        self._py_ports[app_node_id] = py_port_item
+        return py_port_item
+    
+    def remove_py_port(self, app_node_id: str):
+        """Remove a PY port for an APPLICATION node."""
+        if app_node_id in self._py_ports:
+            py_port = self._py_ports.pop(app_node_id)
+            # py_port is a child item, it will be removed automatically
+            # but we should explicitly remove it
+            scene = self.scene()
+            if scene:
+                try:
+                    scene.removeItem(py_port)
+                except (RuntimeError, AttributeError):
+                    pass
+    
+    def get_py_port(self, app_node_id: str) -> Optional[AppPortGraphicsItem]:
+        """Get a PY port by app node ID."""
+        return self._py_ports.get(app_node_id)
     
     def _create_label(self):
         """Create the node name label."""
@@ -392,6 +777,15 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         self.unsetCursor()
         super().hoverLeaveEvent(event)
     
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click - open script editor for APPLICATION nodes."""
+        if self.node_model.node_type == NodeType.APPLICATION:
+            scene = self.scene()
+            if scene and isinstance(scene, TopologyScene):
+                scene.applicationNodeDoubleClicked.emit(self.node_model.id)
+        else:
+            super().mouseDoubleClickEvent(event)
+    
     def contextMenuEvent(self, event):
         """Show context menu for node - allows quick medium type selection."""
         scene = self.scene()
@@ -502,9 +896,20 @@ class LinkGraphicsItem(QGraphicsPathItem):
             color = COLORS["route_default"] if self._is_default_route else COLORS["route_path"]
             self.setPen(QPen(color, 5, Qt.PenStyle.SolidLine, 
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        elif self.link_model.channel_type == ChannelType.APPLICATION_ATTACH:
+            # Application attachment - dashed pink line
+            color = COLORS["link_app"]
+            pen = QPen(color, 2, Qt.PenStyle.DashLine, 
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            pen.setDashPattern([5, 3])  # 5 pixels on, 3 pixels off
+            self.setPen(pen)
         elif self.link_model.channel_type == ChannelType.POINT_TO_POINT:
             color = COLORS["link_p2p"]
             self.setPen(QPen(color, 3, Qt.PenStyle.SolidLine, 
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        elif self.link_model.channel_type == ChannelType.WIFI:
+            color = COLORS["link_wifi"]
+            self.setPen(QPen(color, 3, Qt.PenStyle.DotLine, 
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         else:
             color = COLORS["link_csma"]
@@ -520,6 +925,11 @@ class LinkGraphicsItem(QGraphicsPathItem):
     
     def _update_path(self):
         """Update the path between source and target ports."""
+        # For APPLICATION_ATTACH links, connect to the app connector on the host
+        if self.link_model.channel_type == ChannelType.APPLICATION_ATTACH:
+            self._update_app_attach_path()
+            return
+        
         # Get port positions if available
         source_port_item = self.source_item.get_port_item(self.link_model.source_port_id)
         target_port_item = self.target_item.get_port_item(self.link_model.target_port_id)
@@ -553,6 +963,54 @@ class LinkGraphicsItem(QGraphicsPathItem):
         else:
             path.lineTo(end)
         
+        self.setPath(path)
+    
+    def _update_app_attach_path(self):
+        """Update path for APPLICATION_ATTACH links (app node to PY port on host)."""
+        # Determine which is the APPLICATION node and which is the host
+        app_item = None
+        host_item = None
+        
+        if self.source_item.node_model.node_type == NodeType.APPLICATION:
+            app_item = self.source_item
+            host_item = self.target_item
+        elif self.target_item.node_model.node_type == NodeType.APPLICATION:
+            app_item = self.target_item
+            host_item = self.source_item
+        
+        if not app_item or not host_item:
+            # Fallback to simple line
+            start = self.source_item.scenePos()
+            end = self.target_item.scenePos()
+            path = QPainterPath()
+            path.moveTo(start)
+            path.lineTo(end)
+            self.setPath(path)
+            return
+        
+        # Get/create the PY port on the host
+        app_node_id = app_item.node_model.id
+        py_port = host_item.get_py_port(app_node_id)
+        if not py_port:
+            py_port = host_item.add_py_port(app_node_id)
+        
+        # Draw from APPLICATION node's app port to host's PY port
+        # Get the app port from the APPLICATION node
+        app_port_item = None
+        if hasattr(app_item, '_port_items') and app_item._port_items:
+            app_port_item = list(app_item._port_items.values())[0]
+        
+        if app_port_item:
+            start = app_port_item.scenePos()
+        else:
+            start = app_item.scenePos()
+        
+        end = py_port.scenePos()
+        
+        # Create straight dashed path
+        path = QPainterPath()
+        path.moveTo(start)
+        path.lineTo(end)
         self.setPath(path)
     
     def update_position(self):
@@ -856,6 +1314,7 @@ class TopologyScene(QGraphicsScene):
     linkRemoved = pyqtSignal(str)        # link_id
     portSelected = pyqtSignal(object, object)  # NodeModel, PortConfig
     mediumTypeChanged = pyqtSignal(str, object)  # node_id, new_medium_type
+    applicationNodeDoubleClicked = pyqtSignal(str)  # node_id - for opening script editor
     
     def __init__(self, network_model: NetworkModel, parent=None):
         super().__init__(parent)
@@ -890,9 +1349,14 @@ class TopologyScene(QGraphicsScene):
         
         # Grid is drawn in canvas paintEvent
     
-    def add_node(self, node_model: NodeModel) -> NodeGraphicsItem:
+    def add_node(self, node_model: NodeModel):
         """Add a node to the scene."""
-        item = NodeGraphicsItem(node_model)
+        # Use AppNodeGraphicsItem for APPLICATION nodes
+        if node_model.node_type == NodeType.APPLICATION:
+            item = AppNodeGraphicsItem(node_model)
+        else:
+            item = NodeGraphicsItem(node_model)
+        
         self.addItem(item)
         self._node_items[node_model.id] = item
         self.nodeAdded.emit(node_model)
@@ -943,6 +1407,25 @@ class TopologyScene(QGraphicsScene):
         if link_id in self._link_items:
             link_item = self._link_items.pop(link_id)
             
+            # For APPLICATION_ATTACH links, remove the PY port from the host
+            if link_item.link_model.channel_type == ChannelType.APPLICATION_ATTACH:
+                try:
+                    # Find which is the APPLICATION node and which is the host
+                    app_item = None
+                    host_item = None
+                    
+                    if link_item.source_item.node_model.node_type == NodeType.APPLICATION:
+                        app_item = link_item.source_item
+                        host_item = link_item.target_item
+                    elif link_item.target_item.node_model.node_type == NodeType.APPLICATION:
+                        app_item = link_item.target_item
+                        host_item = link_item.source_item
+                    
+                    if app_item and host_item:
+                        host_item.remove_py_port(app_item.node_model.id)
+                except (RuntimeError, AttributeError):
+                    pass
+            
             # Update port appearances - safely check if nodes still exist
             try:
                 if link_item.source_item and link_item.source_item.node_model.id in self._node_items:
@@ -970,8 +1453,8 @@ class TopologyScene(QGraphicsScene):
                 link_item.link_model.target_node_id == node_id):
                 link_item.update_position()
     
-    def on_port_clicked(self, port_item: PortGraphicsItem):
-        """Handle port selection."""
+    def on_port_clicked(self, port_item):
+        """Handle port selection (PortGraphicsItem or AppPortGraphicsItem)."""
         # Deselect previous port
         if self._selected_port and self._selected_port != port_item:
             try:
@@ -987,8 +1470,12 @@ class TopologyScene(QGraphicsScene):
         node_model = port_item.parent_node.node_model
         self.portSelected.emit(node_model, port_item.port)
     
-    def start_link_from_port(self, port_item: PortGraphicsItem):
+    def start_link_from_port(self, port_item):
         """Start creating a link from a port."""
+        # PY ports can't start new links (they're targets only)
+        if hasattr(port_item, 'is_py_port') and port_item.is_py_port:
+            return
+        
         if port_item.port.is_connected:
             return  # Can't start from connected port
         
@@ -1100,7 +1587,7 @@ class TopologyScene(QGraphicsScene):
     def delete_selected(self):
         """Delete all selected items."""
         for item in self.selectedItems():
-            if isinstance(item, NodeGraphicsItem):
+            if isinstance(item, (NodeGraphicsItem, AppNodeGraphicsItem)):
                 # Remove from model first (handles link cleanup)
                 self.network_model.remove_node(item.node_model.id)
                 # Remove links from scene
@@ -1329,6 +1816,7 @@ class TopologyCanvas(QGraphicsView):
         self._is_panning = False
         self._last_pan_pos = QPointF()
         self._is_creating_link = False
+        self._link_start_button = None  # Track which button started link creation
         
         # Connect selection changes
         self.topology_scene.selectionChanged.connect(self._on_selection_changed)
@@ -1383,7 +1871,7 @@ class TopologyCanvas(QGraphicsView):
         
         if len(selected) == 1:
             item = selected[0]
-            if isinstance(item, NodeGraphicsItem):
+            if isinstance(item, (NodeGraphicsItem, AppNodeGraphicsItem)):
                 self.itemSelected.emit(item.node_model)
             elif isinstance(item, LinkGraphicsItem):
                 self.itemSelected.emit(item.link_model)
@@ -1417,39 +1905,60 @@ class TopologyCanvas(QGraphicsView):
             self._last_pan_pos = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
-        elif event.button() == Qt.MouseButton.RightButton:
-            # Check if we're starting link creation
+        elif event.button() == Qt.MouseButton.LeftButton:
+            # Check if clicking on a port to start link creation
             scene_pos = self.mapToScene(event.pos())
-            
-            # Get all items at this position, sorted by Z-order (topmost first)
             items = self.topology_scene.items(scene_pos)
             
-            # Find the first port or node
+            port_item = None
+            for item in items:
+                # Check for any port type (regular or app)
+                if isinstance(item, (PortGraphicsItem, AppPortGraphicsItem)):
+                    port_item = item
+                    break
+            
+            if port_item:
+                # Check if it's a PY port (can't start links from PY ports)
+                is_py = hasattr(port_item, 'is_py_port') and port_item.is_py_port
+                if not is_py and not port_item.port.is_connected:
+                    self.topology_scene.start_link_from_port(port_item)
+                    self._is_creating_link = True
+                    self._link_start_button = Qt.MouseButton.LeftButton
+                    event.accept()
+                    return
+            
+            # Let default handling proceed (node selection, dragging, etc.)
+            super().mousePressEvent(event)
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Right-click for link creation
+            scene_pos = self.mapToScene(event.pos())
+            items = self.topology_scene.items(scene_pos)
+            
             port_item = None
             node_item = None
             
             for item in items:
-                if isinstance(item, PortGraphicsItem):
+                if isinstance(item, (PortGraphicsItem, AppPortGraphicsItem)):
                     port_item = item
-                    break  # Port is topmost, use it
-                elif isinstance(item, NodeGraphicsItem):
+                    break
+                elif isinstance(item, (NodeGraphicsItem, AppNodeGraphicsItem)):
                     node_item = item
-                    # Don't break - keep looking for a port
             
             if port_item:
-                # Start link from specific port
-                if not port_item.port.is_connected:
+                is_py = hasattr(port_item, 'is_py_port') and port_item.is_py_port
+                if not is_py and not port_item.port.is_connected:
                     self.topology_scene.start_link_from_port(port_item)
                     self._is_creating_link = True
+                    self._link_start_button = Qt.MouseButton.RightButton
                 event.accept()
             elif node_item:
-                # Start link from node (auto-select first available port)
                 available_ports = node_item.node_model.get_available_ports()
                 if available_ports:
                     p_item = node_item.get_port_item(available_ports[0].id)
                     if p_item:
                         self.topology_scene.start_link_from_port(p_item)
                         self._is_creating_link = True
+                        self._link_start_button = Qt.MouseButton.RightButton
                 event.accept()
             else:
                 super().mousePressEvent(event)
@@ -1484,7 +1993,8 @@ class TopologyCanvas(QGraphicsView):
             self.unsetCursor()
             event.accept()
         elif (self._is_creating_link or self.topology_scene._temp_link) and \
-             event.button() == Qt.MouseButton.RightButton:
+             (event.button() == self._link_start_button or 
+              event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)):
             # Finish link creation
             scene_pos = self.mapToScene(event.pos())
             
@@ -1496,10 +2006,10 @@ class TopologyCanvas(QGraphicsView):
             node_item = None
             
             for item in items:
-                if isinstance(item, PortGraphicsItem):
+                if isinstance(item, (PortGraphicsItem, AppPortGraphicsItem)):
                     port_item = item
                     break  # Port is topmost, use it
-                elif isinstance(item, NodeGraphicsItem):
+                elif isinstance(item, (NodeGraphicsItem, AppNodeGraphicsItem)):
                     node_item = item
                     # Don't break - keep looking for a port
             
@@ -1511,6 +2021,7 @@ class TopologyCanvas(QGraphicsView):
                 self.topology_scene.cancel_link_creation()
             
             self._is_creating_link = False
+            self._link_start_button = None
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -1525,6 +2036,7 @@ class TopologyCanvas(QGraphicsView):
             if self.topology_scene._temp_link:
                 self.topology_scene.cancel_link_creation()
                 self._is_creating_link = False
+                self._link_start_button = None
             else:
                 self.topology_scene.clearSelection()
                 self.topology_scene.clear_port_selection()
@@ -1532,7 +2044,7 @@ class TopologyCanvas(QGraphicsView):
         elif event.key() == Qt.Key.Key_A and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
             # Select all
             for item in self.topology_scene.items():
-                if isinstance(item, (NodeGraphicsItem, LinkGraphicsItem)):
+                if isinstance(item, (NodeGraphicsItem, AppNodeGraphicsItem, LinkGraphicsItem)):
                     item.setSelected(True)
             event.accept()
         else:

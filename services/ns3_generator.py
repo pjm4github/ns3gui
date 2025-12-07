@@ -120,9 +120,14 @@ class NS3ScriptGenerator:
         output_dir = output_dir.replace('\\', '/')
         
         # Build node index mapping (node_id -> integer index)
+        # Exclude APPLICATION nodes as they are not real network nodes
+        real_nodes = [
+            (node_id, node) for node_id, node in network.nodes.items()
+            if node.node_type != NodeType.APPLICATION
+        ]
         self._node_index_map = {
             node_id: idx 
-            for idx, node_id in enumerate(network.nodes.keys())
+            for idx, (node_id, node) in enumerate(real_nodes)
         }
         
         # Initialize link tracking (will be populated in _generate_channels)
@@ -136,9 +141,15 @@ class NS3ScriptGenerator:
         self._wifi_ap_devices_var = None
         self._wifi_ap_count = 0
         
+        # Check if any flows use APPLICATION nodes
+        has_app_flows = any(
+            flow.app_enabled and flow.app_node_id
+            for flow in sim_config.flows
+        )
+        
         sections = [
             self._generate_header(network, sim_config),
-            self._generate_imports(),
+            self._generate_imports(has_app_flows),
             self._generate_main_function_start(),
             self._generate_nodes(network),
             self._generate_channels(network),
@@ -171,14 +182,24 @@ Simulation Duration: {sim_config.duration} seconds
 """
 '''
     
-    def _generate_imports(self) -> str:
+    def _generate_imports(self, has_app_flows: bool = False) -> str:
         """Generate ns-3 import statements."""
-        return '''
-# NS-3 imports (ns-3.45+ with cppyy bindings)
-from ns import ns
-
-import sys
-'''
+        lines = [
+            '',
+            '# NS-3 imports (ns-3.45+ with cppyy bindings)',
+            'from ns import ns',
+            '',
+            'import sys',
+        ]
+        
+        if has_app_flows:
+            lines.extend([
+                '',
+                '# Import ApplicationBase for custom socket applications',
+                'from app_base import ApplicationBase',
+            ])
+        
+        return '\n'.join(lines) + '\n'
     
     def _generate_main_function_start(self) -> str:
         """Generate main function start."""
@@ -193,12 +214,15 @@ def main():
     
     def _generate_nodes(self, network: NetworkModel) -> str:
         """Generate node creation code."""
+        # Count only real network nodes (not APPLICATION nodes)
+        real_node_count = len(self._node_index_map)
+        
         lines = [
             "    # ============================================",
             "    # Create Nodes",
             "    # ============================================",
             f"    nodes = ns.NodeContainer()",
-            f"    nodes.Create({len(network.nodes)})",
+            f"    nodes.Create({real_node_count})",
             "",
             "    # Node mapping:",
         ]
@@ -206,6 +230,20 @@ def main():
         for node_id, idx in self._node_index_map.items():
             node = network.nodes[node_id]
             lines.append(f"    # Node {idx}: {node.name} ({node.node_type.name})")
+        
+        # Note APPLICATION nodes
+        app_nodes = [n for n in network.nodes.values() if n.node_type == NodeType.APPLICATION]
+        if app_nodes:
+            lines.append("")
+            lines.append("    # Socket Application nodes (attach to hosts, not separate ns-3 nodes):")
+            for app_node in app_nodes:
+                attached_id = getattr(app_node, 'app_attached_node_id', '')
+                if attached_id and attached_id in self._node_index_map:
+                    attached_node = network.nodes.get(attached_id)
+                    attached_name = attached_node.name if attached_node else "unknown"
+                    lines.append(f"    # {app_node.name} -> attached to {attached_name} (Node {self._node_index_map[attached_id]})")
+                else:
+                    lines.append(f"    # {app_node.name} -> NOT ATTACHED (configure in Property Panel)")
         
         lines.append("")
         return "\n".join(lines)
@@ -246,6 +284,10 @@ def main():
         device_idx = 0  # Counter for created devices
         
         for link_id, link in network.links.items():
+            # Skip APPLICATION_ATTACH links - they're not network links
+            if link.channel_type == ChannelType.APPLICATION_ATTACH:
+                continue
+            
             source_idx = self._node_index_map.get(link.source_node_id, 0)
             target_idx = self._node_index_map.get(link.target_node_id, 0)
             
@@ -1097,7 +1139,24 @@ def main():
             
             lines.append(f"    # Flow {flow_idx}: {flow.name} ({source_name} -> {target_name})")
             
-            if flow.application == TrafficApplication.ECHO:
+            # Check if this flow uses an APPLICATION node
+            app_enabled = getattr(flow, 'app_enabled', False)
+            app_node_id = getattr(flow, 'app_node_id', '')
+            
+            if app_enabled and app_node_id:
+                # Use the APPLICATION node's custom script
+                app_node = network.nodes.get(app_node_id)
+                if app_node and app_node.node_type == NodeType.APPLICATION:
+                    lines.append(f"    # Using Socket Application: {app_node.name}")
+                    lines.extend(self._generate_app_node_flow(
+                        flow_idx, flow, source_idx, target_idx, app_node, network
+                    ))
+                else:
+                    lines.append(f"    # WARNING: Application node {app_node_id} not found, using default")
+                    lines.extend(self._generate_echo_application(
+                        flow_idx, flow, source_idx, target_idx, network
+                    ))
+            elif flow.application == TrafficApplication.ECHO:
                 lines.extend(self._generate_echo_application(
                     flow_idx, flow, source_idx, target_idx, network
                 ))
@@ -1358,6 +1417,220 @@ def main():
         
         return target_link_idx, interface_idx
     
+    def _generate_app_node_flow(
+        self,
+        flow_idx: int,
+        flow: TrafficFlow,
+        source_idx: int,
+        target_idx: int,
+        app_node: NodeModel,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate a flow using an APPLICATION node's custom script with ApplicationBase."""
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: Cannot find interface for target node", ""]
+        
+        port = flow.port if flow.port else 9000 + flow_idx
+        protocol = "UDP" if flow.protocol == TrafficProtocol.UDP else "TCP"
+        script_path = getattr(app_node, 'app_script_path', '')
+        
+        # Get source and target node names
+        source_node = network.nodes.get(flow.source_node_id)
+        target_node = network.nodes.get(flow.target_node_id)
+        source_name = source_node.name if source_node else f"Node{source_idx}"
+        target_name = target_node.name if target_node else f"Node{target_idx}"
+        
+        # Sanitize app name for class name
+        app_class_name = self._sanitize_class_name(app_node.name)
+        
+        lines = [
+            f"    # =========================================================",
+            f"    # Flow {flow_idx}: APPLICATION node '{app_node.name}'",
+            f"    # Source: {source_name} -> Target: {target_name}",
+            f"    # =========================================================",
+            "",
+        ]
+        
+        # Check if custom script exists - it should define a class extending ApplicationBase
+        if script_path and self._script_exists(script_path):
+            lines.extend(self._generate_application_class_flow(
+                flow_idx, flow, source_idx, target_idx, app_node, script_path,
+                protocol, port, target_link_idx, interface_idx, network
+            ))
+        else:
+            # Generate default ApplicationBase usage
+            lines.append(f"    # No custom script found, using default ApplicationBase")
+            lines.extend(self._generate_default_application_flow(
+                flow_idx, flow, source_idx, target_idx, app_node,
+                protocol, port, target_link_idx, interface_idx, network
+            ))
+        
+        return lines
+    
+    def _sanitize_class_name(self, name: str) -> str:
+        """Convert a name to a valid Python class name."""
+        # Remove invalid characters and convert to CamelCase
+        import re
+        # Replace non-alphanumeric with underscore
+        clean = re.sub(r'[^a-zA-Z0-9]', '_', name)
+        # Split and capitalize each part
+        parts = clean.split('_')
+        return ''.join(part.capitalize() for part in parts if part)
+    
+    def _generate_application_class_flow(
+        self,
+        flow_idx: int,
+        flow: TrafficFlow,
+        source_idx: int,
+        target_idx: int,
+        app_node: NodeModel,
+        script_path: str,
+        protocol: str,
+        port: int,
+        target_link_idx: int,
+        interface_idx: int,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate flow code using ApplicationBase class architecture."""
+        import os
+        
+        # Get node names for config
+        source_node = network.nodes.get(flow.source_node_id)
+        target_node = network.nodes.get(flow.target_node_id)
+        source_name = source_node.name if source_node else f"Node{source_idx}"
+        target_name = target_node.name if target_node else f"Node{target_idx}"
+        
+        # Generate unique app variable name
+        app_var = f"app_{flow_idx}"
+        app_class_name = self._sanitize_class_name(app_node.name) + "App"
+        module_name = os.path.splitext(os.path.basename(script_path))[0]
+        
+        # Calculate send interval from flow config
+        send_interval = getattr(flow, 'socket_send_interval', 1.0)
+        if hasattr(flow, 'echo_interval'):
+            send_interval = flow.echo_interval
+        
+        lines = [
+            f"    # Import custom application class from {module_name}.py",
+            f"    # The script should define a class extending ApplicationBase",
+            "",
+            f"    # Get target IP address",
+            f"    target_ip_{flow_idx} = str(interfaces{target_link_idx}.GetAddress({interface_idx}))",
+            "",
+            f"    # Configuration for the application",
+            f"    {app_var}_config = {{",
+            f"        'node': nodes.Get({source_idx}),",
+            f"        'target_address': target_ip_{flow_idx},",
+            f"        'target_port': {port},",
+            f"        'protocol': '{protocol}',",
+            f"        'start_time': {flow.start_time},",
+            f"        'stop_time': {flow.stop_time},",
+            f"        'send_interval': {send_interval},",
+            f"        'packet_size': {flow.packet_size or 512},",
+            f"        'app_name': '{app_node.name}',",
+            f"        'source_node_name': '{source_name}',",
+            f"        'target_node_name': '{target_name}',",
+            f"        'flow_idx': {flow_idx},",
+            f"    }}",
+            "",
+            f"    # Create and setup the application",
+            f"    try:",
+            f"        from {module_name} import {app_class_name}",
+            f"        {app_var} = {app_class_name}({app_var}_config)",
+            f"        {app_var}.setup()",
+            f"        print(f'[Setup] Application {{{app_var}_config[\"app_name\"]}} configured on {source_name}')",
+            f"    except ImportError as e:",
+            f"        print(f'[Warning] Could not import {app_class_name} from {module_name}: {{e}}')",
+            f"        print(f'[Warning] Using default ApplicationBase')",
+            f"        {app_var} = ApplicationBase({app_var}_config)",
+            f"        {app_var}.setup()",
+            f"    except Exception as e:",
+            f"        print(f'[Error] Failed to setup application: {{e}}')",
+            "",
+            f"    # Setup receiver (PacketSink) on target",
+            f"    sink_addr_{flow_idx} = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"    sink_{flow_idx} = ns.PacketSinkHelper(",
+            f"        'ns3::{protocol.capitalize()}SocketFactory',",
+            f"        sink_addr_{flow_idx}.ConvertTo()",
+            f"    )",
+            f"    sink_apps_{flow_idx} = sink_{flow_idx}.Install(nodes.Get({target_idx}))",
+            f"    sink_apps_{flow_idx}.Start(ns.Seconds({max(0, flow.start_time - 0.5)}))",
+            f"    sink_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time + 1.0}))",
+            "",
+        ]
+        
+        return lines
+    
+    def _generate_default_application_flow(
+        self,
+        flow_idx: int,
+        flow: TrafficFlow,
+        source_idx: int,
+        target_idx: int,
+        app_node: NodeModel,
+        protocol: str,
+        port: int,
+        target_link_idx: int,
+        interface_idx: int,
+        network: NetworkModel
+    ) -> list[str]:
+        """Generate flow using default ApplicationBase (no custom script)."""
+        # Get node names for config
+        source_node = network.nodes.get(flow.source_node_id)
+        target_node = network.nodes.get(flow.target_node_id)
+        source_name = source_node.name if source_node else f"Node{source_idx}"
+        target_name = target_node.name if target_node else f"Node{target_idx}"
+        
+        app_var = f"app_{flow_idx}"
+        
+        # Calculate send interval
+        send_interval = getattr(flow, 'socket_send_interval', 1.0)
+        if hasattr(flow, 'echo_interval'):
+            send_interval = flow.echo_interval
+        
+        lines = [
+            f"    # Using default ApplicationBase (no custom script)",
+            "",
+            f"    # Get target IP address",
+            f"    target_ip_{flow_idx} = str(interfaces{target_link_idx}.GetAddress({interface_idx}))",
+            "",
+            f"    # Configuration for the application",
+            f"    {app_var}_config = {{",
+            f"        'node': nodes.Get({source_idx}),",
+            f"        'target_address': target_ip_{flow_idx},",
+            f"        'target_port': {port},",
+            f"        'protocol': '{protocol}',",
+            f"        'start_time': {flow.start_time},",
+            f"        'stop_time': {flow.stop_time},",
+            f"        'send_interval': {send_interval},",
+            f"        'packet_size': {flow.packet_size or 512},",
+            f"        'app_name': '{app_node.name}',",
+            f"        'source_node_name': '{source_name}',",
+            f"        'target_node_name': '{target_name}',",
+            f"        'flow_idx': {flow_idx},",
+            f"    }}",
+            "",
+            f"    # Create and setup the default application",
+            f"    {app_var} = ApplicationBase({app_var}_config)",
+            f"    {app_var}.setup()",
+            f"    print(f'[Setup] Default application configured on {source_name}')",
+            "",
+            f"    # Setup receiver (PacketSink) on target",
+            f"    sink_addr_{flow_idx} = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"    sink_{flow_idx} = ns.PacketSinkHelper(",
+            f"        'ns3::{protocol.capitalize()}SocketFactory',",
+            f"        sink_addr_{flow_idx}.ConvertTo()",
+            f"    )",
+            f"    sink_apps_{flow_idx} = sink_{flow_idx}.Install(nodes.Get({target_idx}))",
+            f"    sink_apps_{flow_idx}.Start(ns.Seconds({max(0, flow.start_time - 0.5)}))",
+            f"    sink_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time + 1.0}))",
+            "",
+        ]
+        
+        return lines
+    
     def _generate_custom_socket_application(
         self, 
         flow_idx: int, 
@@ -1531,100 +1804,330 @@ def main():
             send_interval = getattr(app_node, 'app_send_interval', 1.0)
             start_time = getattr(app_node, 'app_start_time', 1.0)
             stop_time = getattr(app_node, 'app_stop_time', 9.0)
+            script_path = getattr(app_node, 'app_script_path', '')
             
             lines.append(f"    # {app_node.name} ({role}) on {attached_node.name}")
             
-            if role == "receiver":
-                # Generate receiver code
-                lines.extend([
-                    f"    def setup_app_receiver_{app_idx}():",
-                    f"        recv_sock = ns.Socket.CreateSocket(",
-                    f"            nodes.Get({host_idx}),",
-                    f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
-                    f"        )",
-                    f"        local = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
-                    f"        recv_sock.Bind(local.ConvertTo())",
-                    f"        print(f'{app_node.name}: Receiver listening on port {port}')",
-                    "",
-                    f"    ns.Simulator.Schedule(ns.Seconds({max(0, start_time - 0.5)}), setup_app_receiver_{app_idx})",
-                    "",
-                ])
+            # Check if custom script exists
+            if script_path and self._script_exists(script_path):
+                lines.extend(self._generate_custom_script_integration(
+                    app_idx, app_node, host_idx, script_path, role, protocol,
+                    remote_addr, port, payload_size, send_count, send_interval, start_time
+                ))
+            elif role == "receiver":
+                # Generate default receiver code
+                lines.extend(self._generate_default_receiver(
+                    app_idx, app_node.name, host_idx, protocol, port, start_time
+                ))
             else:
-                # Generate sender code
-                # Payload generation
-                if payload_type == "pattern" and payload_data:
-                    if payload_data.startswith("0x"):
-                        lines.append(f"    app_payload_{app_idx} = bytes.fromhex('{payload_data[2:]}')")
-                    else:
-                        # Escape the string for Python
-                        escaped = payload_data.replace("\\", "\\\\").replace("'", "\\'")
-                        lines.append(f"    app_payload_{app_idx} = b'{escaped}'")
-                    lines.append(f"    # Pad or truncate to {payload_size} bytes")
-                    lines.append(f"    app_payload_{app_idx} = (app_payload_{app_idx} * ({payload_size} // len(app_payload_{app_idx}) + 1))[:{payload_size}]")
-                elif payload_type == "sequence":
-                    lines.append(f"    app_payload_{app_idx} = bytes(range(256)) * ({payload_size} // 256 + 1)")
-                    lines.append(f"    app_payload_{app_idx} = app_payload_{app_idx}[:{payload_size}]")
-                else:  # random or default
-                    lines.append(f"    app_payload_{app_idx} = bytes([i % 256 for i in range({payload_size})])")
-                
-                lines.append("")
-                
-                # Sender setup
-                lines.extend([
-                    f"    app_socket_{app_idx} = None",
-                    f"    app_sent_{app_idx} = [0]",
-                    "",
-                    f"    def setup_app_sender_{app_idx}():",
-                    f"        global app_socket_{app_idx}",
-                    f"        app_socket_{app_idx} = ns.Socket.CreateSocket(",
-                    f"            nodes.Get({host_idx}),",
-                    f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
-                    f"        )",
-                ])
-                
-                if remote_addr:
-                    lines.extend([
-                        f"        remote = ns.InetSocketAddress(ns.Ipv4Address('{remote_addr}'), {port})",
-                        f"        app_socket_{app_idx}.Connect(remote.ConvertTo())",
-                        f"        print(f'{app_node.name}: Sender connected to {remote_addr}:{port}')",
-                    ])
-                else:
-                    lines.append(f"        print(f'{app_node.name}: WARNING - No remote address configured')")
-                
-                lines.append("")
-                
-                # Send function
-                lines.extend([
-                    f"    def app_send_{app_idx}():",
-                    f"        if app_socket_{app_idx} is None:",
-                    f"            return",
-                ])
-                
-                if send_count > 0:
-                    lines.extend([
-                        f"        if app_sent_{app_idx}[0] >= {send_count}:",
-                        f"            return",
-                    ])
-                
-                lines.extend([
-                    f"        pkt = ns.Packet(app_payload_{app_idx}, len(app_payload_{app_idx}))",
-                    f"        app_socket_{app_idx}.Send(pkt)",
-                    f"        app_sent_{app_idx}[0] += 1",
-                    f"        print(f'{app_node.name}: Sent packet {{app_sent_{app_idx}[0]}}')",
-                ])
-                
-                if send_count > 0:
-                    lines.append(f"        if app_sent_{app_idx}[0] < {send_count}:")
-                    lines.append(f"            ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
-                else:
-                    lines.append(f"        ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
-                
-                lines.extend([
-                    "",
-                    f"    ns.Simulator.Schedule(ns.Seconds({start_time - 0.1}), setup_app_sender_{app_idx})",
-                    f"    ns.Simulator.Schedule(ns.Seconds({start_time}), app_send_{app_idx})",
-                    "",
-                ])
+                # Generate default sender code
+                lines.extend(self._generate_default_sender(
+                    app_idx, app_node.name, host_idx, protocol, remote_addr, port,
+                    payload_type, payload_data, payload_size, send_count, 
+                    send_interval, start_time
+                ))
+        
+        return lines
+    
+    def _script_exists(self, script_path: str) -> bool:
+        """Check if a custom script file exists."""
+        import os
+        return script_path and os.path.isfile(script_path)
+    
+    def _generate_custom_script_integration(
+        self, app_idx: int, app_node: NodeModel, host_idx: int, script_path: str,
+        role: str, protocol: str, remote_addr: str, port: int, payload_size: int,
+        send_count: int, send_interval: float, start_time: float
+    ) -> list[str]:
+        """Generate code that integrates with a custom Python script."""
+        import os
+        
+        # Read the custom script
+        script_content = ""
+        try:
+            with open(script_path, 'r') as f:
+                script_content = f.read()
+        except Exception as e:
+            return [f"    # ERROR: Could not read script {script_path}: {e}", ""]
+        
+        lines = [
+            f"    # Custom script: {os.path.basename(script_path)}",
+            "",
+            "    # --- Begin custom script integration ---",
+            "",
+        ]
+        
+        # Add the custom script as embedded code with namespace isolation
+        safe_name = f"_app_script_{app_idx}"
+        
+        lines.extend([
+            f"    # Load custom script module for {app_node.name}",
+            f"    import types",
+            f"    {safe_name}_module = types.ModuleType('{safe_name}')",
+            f"    {safe_name}_module.CONFIG = {{",
+            f"        'node_index': {host_idx},",
+            f"        'remote_address': '{remote_addr}',",
+            f"        'remote_port': {port},",
+            f"        'protocol': '{protocol}',",
+            f"        'packet_size': {payload_size},",
+            f"        'send_count': {send_count},",
+            f"        'send_interval': {send_interval},",
+            f"    }}",
+            "",
+        ])
+        
+        # Embed the script code (indented and escaped)
+        lines.append(f"    {safe_name}_code = '''")
+        for line in script_content.split('\n'):
+            # Escape triple quotes in the script
+            escaped_line = line.replace("'''", "' ' '")
+            lines.append(escaped_line)
+        lines.append("'''")
+        lines.append("")
+        
+        lines.extend([
+            f"    exec({safe_name}_code, {safe_name}_module.__dict__)",
+            "",
+        ])
+        
+        # Call on_simulation_start if it exists
+        lines.extend([
+            f"    # Initialize custom script",
+            f"    if hasattr({safe_name}_module, 'on_simulation_start'):",
+            f"        try:",
+            f"            {safe_name}_module.on_simulation_start()",
+            f"        except Exception as e:",
+            f"            print(f'{app_node.name}: on_simulation_start error: {{e}}')",
+            "",
+        ])
+        
+        if role == "sender":
+            lines.extend(self._generate_custom_script_sender(
+                app_idx, app_node.name, host_idx, safe_name, protocol, remote_addr,
+                port, send_count, send_interval, start_time
+            ))
+        else:
+            lines.extend(self._generate_custom_script_receiver(
+                app_idx, app_node.name, host_idx, safe_name, protocol, port, start_time
+            ))
+        
+        lines.extend([
+            "    # --- End custom script integration ---",
+            "",
+        ])
+        
+        return lines
+    
+    def _generate_custom_script_sender(
+        self, app_idx: int, app_name: str, host_idx: int, safe_name: str,
+        protocol: str, remote_addr: str, port: int, send_count: int, 
+        send_interval: float, start_time: float
+    ) -> list[str]:
+        """Generate sender code that uses custom script's create_payload."""
+        lines = [
+            f"    # Sender using custom create_payload()",
+            f"    app_socket_{app_idx} = None",
+            f"    app_sent_{app_idx} = [0]",
+            "",
+            f"    def setup_app_sender_{app_idx}():",
+            f"        global app_socket_{app_idx}",
+            f"        app_socket_{app_idx} = ns.Socket.CreateSocket(",
+            f"            nodes.Get({host_idx}),",
+            f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+        ]
+        
+        if remote_addr:
+            lines.extend([
+                f"        remote = ns.InetSocketAddress(ns.Ipv4Address('{remote_addr}'), {port})",
+                f"        app_socket_{app_idx}.Connect(remote.ConvertTo())",
+                f"        print(f'{app_name}: Connected to {remote_addr}:{port}')",
+            ])
+        
+        lines.extend([
+            "",
+            f"    def app_send_{app_idx}():",
+            f"        if app_socket_{app_idx} is None:",
+            f"            return",
+        ])
+        
+        if send_count > 0:
+            lines.extend([
+                f"        if app_sent_{app_idx}[0] >= {send_count}:",
+                f"            # Call on_simulation_end if defined",
+                f"            if hasattr({safe_name}_module, 'on_simulation_end'):",
+                f"                try:",
+                f"                    {safe_name}_module.on_simulation_end()",
+                f"                except Exception as e:",
+                f"                    print(f'{app_name}: on_simulation_end error: {{e}}')",
+                f"            return",
+            ])
+        
+        lines.extend([
+            f"        # Get payload from custom create_payload()",
+            f"        try:",
+            f"            payload = {safe_name}_module.create_payload()",
+            f"            if not isinstance(payload, bytes):",
+            f"                payload = str(payload).encode('utf-8')",
+            f"        except Exception as e:",
+            f"            print(f'{app_name}: create_payload error: {{e}}')",
+            f"            payload = b'ERROR'",
+            "",
+            f"        pkt = ns.Packet(payload, len(payload))",
+            f"        app_socket_{app_idx}.Send(pkt)",
+            f"        app_sent_{app_idx}[0] += 1",
+            "",
+            f"        # Call on_packet_sent callback",
+            f"        if hasattr({safe_name}_module, 'on_packet_sent'):",
+            f"            try:",
+            f"                {safe_name}_module.on_packet_sent(app_sent_{app_idx}[0] - 1, payload)",
+            f"            except Exception as e:",
+            f"                print(f'{app_name}: on_packet_sent error: {{e}}')",
+        ])
+        
+        if send_count > 0:
+            lines.extend([
+                f"        if app_sent_{app_idx}[0] < {send_count}:",
+                f"            ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})",
+            ])
+        else:
+            lines.append(f"        ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
+        
+        lines.extend([
+            "",
+            f"    ns.Simulator.Schedule(ns.Seconds({start_time - 0.1}), setup_app_sender_{app_idx})",
+            f"    ns.Simulator.Schedule(ns.Seconds({start_time}), app_send_{app_idx})",
+            "",
+        ])
+        
+        return lines
+    
+    def _generate_custom_script_receiver(
+        self, app_idx: int, app_name: str, host_idx: int, safe_name: str,
+        protocol: str, port: int, start_time: float
+    ) -> list[str]:
+        """Generate receiver code that uses custom script's on_packet_received."""
+        lines = [
+            f"    # Receiver using custom on_packet_received()",
+            f"    recv_socket_{app_idx} = None",
+            "",
+            f"    def setup_app_receiver_{app_idx}():",
+            f"        global recv_socket_{app_idx}",
+            f"        recv_socket_{app_idx} = ns.Socket.CreateSocket(",
+            f"            nodes.Get({host_idx}),",
+            f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+            f"        local = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"        recv_socket_{app_idx}.Bind(local.ConvertTo())",
+            f"        print(f'{app_name}: Receiver listening on port {port}')",
+            "",
+            f"        # Note: In ns-3 Python bindings, setting up recv callbacks is complex",
+            f"        # The on_packet_received callback would need C++ callback registration",
+            f"        # For now, the receiver just binds to accept incoming packets",
+            "",
+            f"    ns.Simulator.Schedule(ns.Seconds({max(0, start_time - 0.5)}), setup_app_receiver_{app_idx})",
+            "",
+        ]
+        
+        return lines
+    
+    def _generate_default_receiver(
+        self, app_idx: int, app_name: str, host_idx: int, protocol: str, port: int,
+        start_time: float
+    ) -> list[str]:
+        """Generate default receiver code (no custom script)."""
+        return [
+            f"    def setup_app_receiver_{app_idx}():",
+            f"        recv_sock = ns.Socket.CreateSocket(",
+            f"            nodes.Get({host_idx}),",
+            f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+            f"        local = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
+            f"        recv_sock.Bind(local.ConvertTo())",
+            f"        print(f'{app_name}: Receiver listening on port {port}')",
+            "",
+            f"    ns.Simulator.Schedule(ns.Seconds({max(0, start_time - 0.5)}), setup_app_receiver_{app_idx})",
+            "",
+        ]
+    
+    def _generate_default_sender(
+        self, app_idx: int, app_name: str, host_idx: int, protocol: str, 
+        remote_addr: str, port: int, payload_type: str, payload_data: str,
+        payload_size: int, send_count: int, send_interval: float, start_time: float
+    ) -> list[str]:
+        """Generate default sender code (no custom script)."""
+        lines = []
+        
+        # Payload generation
+        if payload_type == "pattern" and payload_data:
+            if payload_data.startswith("0x"):
+                lines.append(f"    app_payload_{app_idx} = bytes.fromhex('{payload_data[2:]}')")
+            else:
+                escaped = payload_data.replace("\\", "\\\\").replace("'", "\\'")
+                lines.append(f"    app_payload_{app_idx} = b'{escaped}'")
+            lines.append(f"    # Pad or truncate to {payload_size} bytes")
+            lines.append(f"    app_payload_{app_idx} = (app_payload_{app_idx} * ({payload_size} // len(app_payload_{app_idx}) + 1))[:{payload_size}]")
+        elif payload_type == "sequence":
+            lines.append(f"    app_payload_{app_idx} = bytes(range(256)) * ({payload_size} // 256 + 1)")
+            lines.append(f"    app_payload_{app_idx} = app_payload_{app_idx}[:{payload_size}]")
+        else:
+            lines.append(f"    app_payload_{app_idx} = bytes([i % 256 for i in range({payload_size})])")
+        
+        lines.append("")
+        
+        lines.extend([
+            f"    app_socket_{app_idx} = None",
+            f"    app_sent_{app_idx} = [0]",
+            "",
+            f"    def setup_app_sender_{app_idx}():",
+            f"        global app_socket_{app_idx}",
+            f"        app_socket_{app_idx} = ns.Socket.CreateSocket(",
+            f"            nodes.Get({host_idx}),",
+            f"            ns.{protocol.capitalize()}SocketFactory.GetTypeId()",
+            f"        )",
+        ])
+        
+        if remote_addr:
+            lines.extend([
+                f"        remote = ns.InetSocketAddress(ns.Ipv4Address('{remote_addr}'), {port})",
+                f"        app_socket_{app_idx}.Connect(remote.ConvertTo())",
+                f"        print(f'{app_name}: Sender connected to {remote_addr}:{port}')",
+            ])
+        else:
+            lines.append(f"        print(f'{app_name}: WARNING - No remote address configured')")
+        
+        lines.extend([
+            "",
+            f"    def app_send_{app_idx}():",
+            f"        if app_socket_{app_idx} is None:",
+            f"            return",
+        ])
+        
+        if send_count > 0:
+            lines.extend([
+                f"        if app_sent_{app_idx}[0] >= {send_count}:",
+                f"            return",
+            ])
+        
+        lines.extend([
+            f"        pkt = ns.Packet(app_payload_{app_idx}, len(app_payload_{app_idx}))",
+            f"        app_socket_{app_idx}.Send(pkt)",
+            f"        app_sent_{app_idx}[0] += 1",
+            f"        print(f'{app_name}: Sent packet {{app_sent_{app_idx}[0]}}')",
+        ])
+        
+        if send_count > 0:
+            lines.append(f"        if app_sent_{app_idx}[0] < {send_count}:")
+            lines.append(f"            ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
+        else:
+            lines.append(f"        ns.Simulator.Schedule(ns.Seconds({send_interval}), app_send_{app_idx})")
+        
+        lines.extend([
+            "",
+            f"    ns.Simulator.Schedule(ns.Seconds({start_time - 0.1}), setup_app_sender_{app_idx})",
+            f"    ns.Simulator.Schedule(ns.Seconds({start_time}), app_send_{app_idx})",
+            "",
+        ])
         
         return lines
 
@@ -1757,6 +2260,78 @@ def main():
 if __name__ == '__main__':
     sys.exit(main())
 '''
+    
+    def get_required_files(
+        self, 
+        network: NetworkModel, 
+        sim_config: SimulationConfig
+    ) -> list[dict]:
+        """
+        Get list of files required for simulation with APPLICATION nodes.
+        
+        Returns a list of dicts with:
+            - 'type': 'base' | 'custom'
+            - 'source_path': Path to source file (or None for embedded)
+            - 'dest_name': Destination filename in scratch directory
+            - 'content': File content (if embedded)
+        
+        Args:
+            network: Network topology model
+            sim_config: Simulation configuration
+            
+        Returns:
+            List of file descriptors needed for simulation
+        """
+        files = []
+        
+        # Check if any flows use APPLICATION nodes
+        has_app_flows = any(
+            flow.app_enabled and flow.app_node_id
+            for flow in sim_config.flows
+        )
+        
+        if not has_app_flows:
+            return files
+        
+        # Add app_base.py (the base class)
+        import os
+        base_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'templates',
+            'app_base.py'
+        )
+        
+        files.append({
+            'type': 'base',
+            'source_path': base_path,
+            'dest_name': 'app_base.py',
+            'content': None,  # Read from source_path
+        })
+        
+        # Add custom application scripts
+        added_scripts = set()
+        
+        for flow in sim_config.flows:
+            if not flow.app_enabled or not flow.app_node_id:
+                continue
+            
+            app_node = network.nodes.get(flow.app_node_id)
+            if not app_node:
+                continue
+            
+            script_path = getattr(app_node, 'app_script_path', '')
+            if script_path and script_path not in added_scripts:
+                if os.path.exists(script_path):
+                    script_name = os.path.basename(script_path)
+                    files.append({
+                        'type': 'custom',
+                        'source_path': script_path,
+                        'dest_name': script_name,
+                        'content': None,  # Read from source_path
+                    })
+                    added_scripts.add(script_path)
+        
+        return files
 
 
 def generate_ns3_script(
