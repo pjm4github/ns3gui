@@ -120,10 +120,8 @@ class NS3ScriptGenerator:
         output_dir = output_dir.replace('\\', '/')
         
         # Build node index mapping (node_id -> integer index)
-        # Exclude APPLICATION nodes as they are not real network nodes
         real_nodes = [
             (node_id, node) for node_id, node in network.nodes.items()
-            if node.node_type != NodeType.APPLICATION
         ]
         self._node_index_map = {
             node_id: idx 
@@ -231,19 +229,14 @@ def main():
             node = network.nodes[node_id]
             lines.append(f"    # Node {idx}: {node.name} ({node.node_type.name})")
         
-        # Note APPLICATION nodes
-        app_nodes = [n for n in network.nodes.values() if n.node_type == NodeType.APPLICATION]
-        if app_nodes:
+        # Note nodes with application scripts
+        app_script_nodes = [n for n in network.nodes.values() if n.has_app_script]
+        if app_script_nodes:
             lines.append("")
-            lines.append("    # Socket Application nodes (attach to hosts, not separate ns-3 nodes):")
-            for app_node in app_nodes:
-                attached_id = getattr(app_node, 'app_attached_node_id', '')
-                if attached_id and attached_id in self._node_index_map:
-                    attached_node = network.nodes.get(attached_id)
-                    attached_name = attached_node.name if attached_node else "unknown"
-                    lines.append(f"    # {app_node.name} -> attached to {attached_name} (Node {self._node_index_map[attached_id]})")
-                else:
-                    lines.append(f"    # {app_node.name} -> NOT ATTACHED (configure in Property Panel)")
+            lines.append("    # Nodes with custom application scripts:")
+            for node in app_script_nodes:
+                if node.id in self._node_index_map:
+                    lines.append(f"    # Node {self._node_index_map[node.id]}: {node.name} has custom app script")
         
         lines.append("")
         return "\n".join(lines)
@@ -284,10 +277,6 @@ def main():
         device_idx = 0  # Counter for created devices
         
         for link_id, link in network.links.items():
-            # Skip APPLICATION_ATTACH links - they're not network links
-            if link.channel_type == ChannelType.APPLICATION_ATTACH:
-                continue
-            
             source_idx = self._node_index_map.get(link.source_node_id, 0)
             target_idx = self._node_index_map.get(link.target_node_id, 0)
             
@@ -1139,20 +1128,20 @@ def main():
             
             lines.append(f"    # Flow {flow_idx}: {flow.name} ({source_name} -> {target_name})")
             
-            # Check if this flow uses an APPLICATION node
+            # Check if this flow uses a node with a custom app script
             app_enabled = getattr(flow, 'app_enabled', False)
             app_node_id = getattr(flow, 'app_node_id', '')
             
             if app_enabled and app_node_id:
-                # Use the APPLICATION node's custom script
+                # Use the node's custom script
                 app_node = network.nodes.get(app_node_id)
-                if app_node and app_node.node_type == NodeType.APPLICATION:
-                    lines.append(f"    # Using Socket Application: {app_node.name}")
+                if app_node and app_node.has_app_script:
+                    lines.append(f"    # Using custom app script from: {app_node.name}")
                     lines.extend(self._generate_app_node_flow(
                         flow_idx, flow, source_idx, target_idx, app_node, network
                     ))
                 else:
-                    lines.append(f"    # WARNING: Application node {app_node_id} not found, using default")
+                    lines.append(f"    # WARNING: Node {app_node_id} has no app script, using default")
                     lines.extend(self._generate_echo_application(
                         flow_idx, flow, source_idx, target_idx, network
                     ))
@@ -1757,75 +1746,33 @@ def main():
         return lines
     
     def _generate_application_node_sockets(self, network: NetworkModel) -> list[str]:
-        """Generate socket applications from APPLICATION nodes in the topology."""
+        """Generate socket applications from nodes with custom app scripts."""
         lines = []
         
-        # Find all APPLICATION nodes
-        app_nodes = [
+        # Find all nodes with application scripts
+        app_script_nodes = [
             (node_id, node) for node_id, node in network.nodes.items()
-            if node.node_type == NodeType.APPLICATION
+            if node.has_app_script
         ]
         
-        if not app_nodes:
+        if not app_script_nodes:
             return lines
         
         lines.extend([
             "    # ----------------------------------------",
-            "    # Socket Applications from Topology",
+            "    # Custom Socket Applications from Nodes",
             "    # ----------------------------------------",
             "",
         ])
         
-        for app_idx, (node_id, app_node) in enumerate(app_nodes):
-            # Get attached host node
-            attached_id = getattr(app_node, 'app_attached_node_id', '')
-            if not attached_id:
-                lines.append(f"    # {app_node.name}: SKIPPED - not attached to any host")
+        for app_idx, (node_id, app_node) in enumerate(app_script_nodes):
+            node_idx = self._node_index_map.get(node_id)
+            if node_idx is None:
+                lines.append(f"    # {app_node.name}: SKIPPED - not in node map")
                 continue
             
-            attached_node = network.nodes.get(attached_id)
-            if not attached_node:
-                lines.append(f"    # {app_node.name}: SKIPPED - attached node not found")
-                continue
-            
-            host_idx = self._node_index_map.get(attached_id)
-            if host_idx is None:
-                lines.append(f"    # {app_node.name}: SKIPPED - attached node not in node map")
-                continue
-            
-            role = getattr(app_node, 'app_role', 'sender')
-            protocol = getattr(app_node, 'app_protocol', 'UDP')
-            remote_addr = getattr(app_node, 'app_remote_address', '')
-            port = getattr(app_node, 'app_remote_port', 9000)
-            payload_type = getattr(app_node, 'app_payload_type', 'pattern')
-            payload_data = getattr(app_node, 'app_payload_data', '')
-            payload_size = getattr(app_node, 'app_payload_size', 512)
-            send_count = getattr(app_node, 'app_send_count', 10)
-            send_interval = getattr(app_node, 'app_send_interval', 1.0)
-            start_time = getattr(app_node, 'app_start_time', 1.0)
-            stop_time = getattr(app_node, 'app_stop_time', 9.0)
-            script_path = getattr(app_node, 'app_script_path', '')
-            
-            lines.append(f"    # {app_node.name} ({role}) on {attached_node.name}")
-            
-            # Check if custom script exists
-            if script_path and self._script_exists(script_path):
-                lines.extend(self._generate_custom_script_integration(
-                    app_idx, app_node, host_idx, script_path, role, protocol,
-                    remote_addr, port, payload_size, send_count, send_interval, start_time
-                ))
-            elif role == "receiver":
-                # Generate default receiver code
-                lines.extend(self._generate_default_receiver(
-                    app_idx, app_node.name, host_idx, protocol, port, start_time
-                ))
-            else:
-                # Generate default sender code
-                lines.extend(self._generate_default_sender(
-                    app_idx, app_node.name, host_idx, protocol, remote_addr, port,
-                    payload_type, payload_data, payload_size, send_count, 
-                    send_interval, start_time
-                ))
+            lines.append(f"    # Custom app from {app_node.name} (Node {node_idx})")
+            lines.append(f"    # App script stored in node.app_script - will be written at runtime")
         
         return lines
     

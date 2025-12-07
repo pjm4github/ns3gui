@@ -351,20 +351,18 @@ class SocketAppEditorDialog(QDialog):
     - Syntax highlighting
     - Line numbers
     - Template generation
-    - File save/load
+    - ApplicationBase class integration
+    
+    Double-click any node to open this editor.
+    The script is stored in node.app_script.
     """
     
-    scriptSaved = pyqtSignal(str, str)  # node_id, script_path
+    scriptSaved = pyqtSignal(str, str)  # node_id, script_content
     
-    def __init__(self, node: NodeModel, scripts_dir: str, parent=None):
+    def __init__(self, node: NodeModel, parent=None):
         super().__init__(parent)
         self._node = node
-        self._scripts_dir = scripts_dir
         self._modified = False
-        self._script_path = os.path.join(scripts_dir, f"{self._sanitize_name(node.name)}.py")
-        
-        # Ensure scripts directory exists
-        os.makedirs(scripts_dir, exist_ok=True)
         
         self._setup_ui()
         self._load_or_generate_script()
@@ -436,8 +434,8 @@ class SocketAppEditorDialog(QDialog):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
         
-        # File path label
-        self._path_label = QLabel(f"📁 {self._script_path}")
+        # Node name label
+        self._path_label = QLabel(f"📝 {self._node.name}")
         self._path_label.setStyleSheet("color: #636D83; padding: 0 10px;")
         toolbar.addWidget(self._path_label)
         
@@ -648,19 +646,14 @@ class SocketAppEditorDialog(QDialog):
         self._status_bar.showMessage(message)
     
     def _load_or_generate_script(self):
-        """Load existing script or generate from template."""
-        if os.path.exists(self._script_path):
-            try:
-                with open(self._script_path, 'r') as f:
-                    self._editor.setPlainText(f.read())
-                self._update_status(f"Loaded: {self._script_path}")
-                self._modified = False
-            except Exception as e:
-                self._update_status(f"Error loading: {e}", is_error=True)
-                self._generate_template()
+        """Load existing script from node or generate from template."""
+        if self._node.app_script:
+            self._editor.setPlainText(self._node.app_script)
+            self._update_status(f"Loaded script for {self._node.name}")
+            self._modified = False
         else:
             self._generate_template()
-            self._update_status("Generated new template")
+            self._update_status("Generated new template - edit and save to attach to node")
     
     def _sanitize_class_name(self, name: str) -> str:
         """Convert a name to a valid Python class name."""
@@ -672,24 +665,18 @@ class SocketAppEditorDialog(QDialog):
         return ''.join(part.capitalize() for part in parts if part)
     
     def _generate_template(self):
-        """Generate script template based on node configuration."""
-        role = getattr(self._node, 'app_role', 'sender')
-        protocol = getattr(self._node, 'app_protocol', 'UDP')
-        remote_addr = getattr(self._node, 'app_remote_address', '10.1.1.2')
-        port = getattr(self._node, 'app_remote_port', 9000)
-        payload_size = getattr(self._node, 'app_payload_size', 512)
-        payload_type = getattr(self._node, 'app_payload_type', 'pattern')
-        payload_data = getattr(self._node, 'app_payload_data', '')
-        send_count = getattr(self._node, 'app_send_count', 10)
-        send_interval = getattr(self._node, 'app_send_interval', 1.0)
-        
-        if role == 'sender':
-            template = self._generate_sender_template(
-                protocol, remote_addr, port, payload_size,
-                payload_type, payload_data, send_count, send_interval
-            )
-        else:
-            template = self._generate_receiver_template(protocol, port)
+        """Generate script template based on node type."""
+        # Generate a simple template that extends ApplicationBase
+        template = self._generate_sender_template(
+            protocol='UDP',
+            remote_addr='10.1.1.2',
+            port=9000,
+            payload_size=512,
+            payload_type='pattern',
+            payload_data='',
+            send_count=10,
+            send_interval=1.0
+        )
         
         self._editor.setPlainText(template)
         self._modified = True
@@ -949,37 +936,37 @@ class {class_name}(ApplicationBase):
         code = self._editor.toPlainText()
         
         try:
-            compile(code, self._script_path, 'exec')
+            compile(code, f"{self._node.name}_app.py", 'exec')
             
-            # Check for required functions
-            missing = []
-            role = getattr(self._node, 'app_role', 'sender')
-            
-            if role == 'sender':
-                if 'def create_payload' not in code:
-                    missing.append('create_payload()')
-                if 'def on_packet_sent' not in code:
-                    missing.append('on_packet_sent()')
-            else:
-                if 'def on_packet_received' not in code:
-                    missing.append('on_packet_received()')
-            
-            if missing:
+            # Check for required class/methods
+            if 'class ' not in code or 'ApplicationBase' not in code:
                 self._update_status(
-                    f"Warning: Missing functions: {', '.join(missing)}", 
+                    "Warning: Script should define a class extending ApplicationBase", 
                     is_error=True
                 )
                 QMessageBox.warning(
                     self, "Validation Warning",
-                    f"Script is syntactically valid but missing required functions:\n\n"
-                    f"• {chr(10).join(missing)}\n\n"
-                    f"These functions are needed for the simulation to work correctly."
+                    "Script should define a class that extends ApplicationBase.\n\n"
+                    "Example:\n"
+                    "class MyApp(ApplicationBase):\n"
+                    "    def create_payload(self) -> bytes:\n"
+                    "        return b'Hello'"
+                )
+            elif 'def create_payload' not in code:
+                self._update_status(
+                    "Warning: Missing create_payload() method", 
+                    is_error=True
+                )
+                QMessageBox.warning(
+                    self, "Validation Warning",
+                    "Script should include a create_payload() method.\n\n"
+                    "This method returns the bytes to send for each packet."
                 )
             else:
                 self._update_status("✓ Script is valid")
                 QMessageBox.information(
                     self, "Validation Passed",
-                    "Script is valid and contains all required functions."
+                    "Script is valid and contains the expected structure."
                 )
                 
         except SyntaxError as e:
@@ -990,23 +977,22 @@ class {class_name}(ApplicationBase):
             )
     
     def _save_script(self) -> bool:
-        """Save the script to file."""
+        """Save the script to node.app_script."""
         code = self._editor.toPlainText()
         
         try:
             # Validate syntax first
-            compile(code, self._script_path, 'exec')
+            compile(code, f"{self._node.name}_app.py", 'exec')
             
-            # Save to file
-            with open(self._script_path, 'w') as f:
-                f.write(code)
+            # Save to node
+            self._node.app_script = code
             
             self._modified = False
             self.setWindowTitle(f"Socket Application Editor - {self._node.name}")
-            self._update_status(f"Saved: {self._script_path}")
+            self._update_status(f"Saved script for {self._node.name}")
             
-            # Emit signal
-            self.scriptSaved.emit(self._node.id, self._script_path)
+            # Emit signal with script content
+            self.scriptSaved.emit(self._node.id, code)
             
             return True
             

@@ -505,7 +505,6 @@ class NodePropertiesWidget(QWidget):
         self._type_combo.addItem("Switch", NodeType.SWITCH)
         self._type_combo.addItem("WiFi Station", NodeType.STATION)
         self._type_combo.addItem("Access Point", NodeType.ACCESS_POINT)
-        self._type_combo.addItem("Socket Application", NodeType.APPLICATION)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         self._type_combo.setStyleSheet(input_style())
         form.addRow("Type:", self._type_combo)
@@ -1035,85 +1034,6 @@ class NodePropertiesWidget(QWidget):
             self._wifi_tx_power_spin.blockSignals(True)
             self._wifi_tx_power_spin.setValue(getattr(self._node, 'wifi_tx_power', 20.0))
             self._wifi_tx_power_spin.blockSignals(False)
-        
-        elif self._node.node_type == NodeType.APPLICATION:
-            self._app_widget.show()
-            self._update_app_attached_combo()
-            
-            # Attached node
-            self._app_attached_combo.blockSignals(True)
-            attached_id = getattr(self._node, 'app_attached_node_id', '')
-            idx = self._app_attached_combo.findData(attached_id)
-            self._app_attached_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self._app_attached_combo.blockSignals(False)
-            
-            # Role
-            self._app_role_combo.blockSignals(True)
-            role = getattr(self._node, 'app_role', 'sender')
-            idx = self._app_role_combo.findData(role)
-            self._app_role_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self._app_role_combo.blockSignals(False)
-            
-            # Protocol
-            self._app_protocol_combo.blockSignals(True)
-            proto = getattr(self._node, 'app_protocol', 'UDP')
-            idx = self._app_protocol_combo.findData(proto)
-            self._app_protocol_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self._app_protocol_combo.blockSignals(False)
-            
-            # Remote Address
-            self._app_remote_addr_edit.blockSignals(True)
-            self._app_remote_addr_edit.setText(getattr(self._node, 'app_remote_address', ''))
-            self._app_remote_addr_edit.blockSignals(False)
-            
-            # Port
-            self._app_port_spin.blockSignals(True)
-            port = getattr(self._node, 'app_remote_port', 9000)
-            self._app_port_spin.setValue(port)
-            self._app_port_spin.blockSignals(False)
-            
-            # Payload Type
-            self._app_payload_type_combo.blockSignals(True)
-            ptype = getattr(self._node, 'app_payload_type', 'pattern')
-            idx = self._app_payload_type_combo.findData(ptype)
-            self._app_payload_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self._app_payload_type_combo.blockSignals(False)
-            
-            # Payload Data
-            self._app_payload_edit.blockSignals(True)
-            self._app_payload_edit.setText(getattr(self._node, 'app_payload_data', ''))
-            self._app_payload_edit.blockSignals(False)
-            
-            # Payload Size
-            self._app_payload_size_spin.blockSignals(True)
-            self._app_payload_size_spin.setValue(getattr(self._node, 'app_payload_size', 512))
-            self._app_payload_size_spin.blockSignals(False)
-            
-            # Send Count
-            self._app_send_count_spin.blockSignals(True)
-            self._app_send_count_spin.setValue(getattr(self._node, 'app_send_count', 10))
-            self._app_send_count_spin.blockSignals(False)
-            
-            # Send Interval
-            self._app_interval_spin.blockSignals(True)
-            self._app_interval_spin.setValue(getattr(self._node, 'app_send_interval', 1.0))
-            self._app_interval_spin.blockSignals(False)
-            
-            # Start/Stop Time
-            self._app_start_time_spin.blockSignals(True)
-            self._app_start_time_spin.setValue(getattr(self._node, 'app_start_time', 1.0))
-            self._app_start_time_spin.blockSignals(False)
-            
-            self._app_stop_time_spin.blockSignals(True)
-            self._app_stop_time_spin.setValue(getattr(self._node, 'app_stop_time', 9.0))
-            self._app_stop_time_spin.blockSignals(False)
-            
-            # Show/hide fields based on role
-            is_sender = (getattr(self._node, 'app_role', 'sender') == 'sender')
-            self._app_remote_addr_edit.setEnabled(is_sender)
-            self._app_payload_edit.setEnabled(is_sender)
-            self._app_send_count_spin.setEnabled(is_sender)
-            self._app_interval_spin.setEnabled(is_sender)
     
     def _on_name_changed(self, text):
         if self._node:
@@ -1198,30 +1118,9 @@ class NodePropertiesWidget(QWidget):
         self._app_attached_combo.blockSignals(False)
     
     def _on_app_prop_changed(self):
-        """Handle socket application property changes."""
-        if self._node and self._node.node_type == NodeType.APPLICATION:
-            self._node.app_attached_node_id = self._app_attached_combo.currentData() or ""
-            self._node.app_role = self._app_role_combo.currentData()
-            self._node.app_protocol = self._app_protocol_combo.currentData()
-            self._node.app_remote_address = self._app_remote_addr_edit.text()
-            self._node.app_remote_port = self._app_port_spin.value()
-            self._node.app_local_port = self._app_port_spin.value()
-            self._node.app_payload_type = self._app_payload_type_combo.currentData()
-            self._node.app_payload_data = self._app_payload_edit.text()
-            self._node.app_payload_size = self._app_payload_size_spin.value()
-            self._node.app_send_count = self._app_send_count_spin.value()
-            self._node.app_send_interval = self._app_interval_spin.value()
-            self._node.app_start_time = self._app_start_time_spin.value()
-            self._node.app_stop_time = self._app_stop_time_spin.value()
-            
-            # Update UI based on role
-            is_sender = (self._node.app_role == 'sender')
-            self._app_remote_addr_edit.setEnabled(is_sender)
-            self._app_payload_edit.setEnabled(is_sender)
-            self._app_send_count_spin.setEnabled(is_sender)
-            self._app_interval_spin.setEnabled(is_sender)
-            
-            self.propertiesChanged.emit()
+        """Handle socket application property changes - deprecated, no longer used."""
+        # APPLICATION node type has been removed - apps are now edited via double-click
+        pass
     
     def _on_subnet_changed(self):
         if self._node and self._node.node_type == NodeType.SWITCH:

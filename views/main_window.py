@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
         self.canvas.topology_scene.mediumTypeChanged.connect(self._on_scene_medium_type_changed)
         
         # Application node double-click -> open script editor
-        self.canvas.topology_scene.applicationNodeDoubleClicked.connect(self._on_application_node_double_clicked)
+        self.canvas.topology_scene.nodeDoubleClicked.connect(self._on_node_double_clicked)
         
         # Property changes -> Canvas update
         self.property_panel.propertiesChanged.connect(self._on_properties_changed)
@@ -715,41 +715,37 @@ class MainWindow(QMainWindow):
         medium_name = new_medium.name.replace('_', ' ').title() if hasattr(new_medium, 'name') else str(new_medium)
         self.statusBar().showMessage(f"Changed medium type to {medium_name}", 2000)
     
-    def _on_application_node_double_clicked(self, node_id: str):
-        """Handle double-click on APPLICATION node - open script editor."""
+    def _on_node_double_clicked(self, node_id: str):
+        """Handle double-click on any node - open script editor."""
         from views.socket_app_editor import SocketAppEditorDialog
         
         node = self.network_model.get_node(node_id)
-        if not node or node.node_type != NodeType.APPLICATION:
+        if not node:
             return
         
-        # Get scripts directory from settings
-        scripts_dir = self._get_scripts_dir()
-        
         # Open the editor dialog
-        dialog = SocketAppEditorDialog(node, scripts_dir, self)
+        dialog = SocketAppEditorDialog(node, self)
         dialog.scriptSaved.connect(self._on_app_script_saved)
-        dialog.exec()
+        result = dialog.exec()
+        
+        # Update the node's visual indicator after dialog closes
+        if result:
+            self._update_node_app_indicator(node_id)
     
-    def _get_scripts_dir(self) -> str:
-        """Get the directory for socket application scripts from settings."""
-        from services.settings_manager import get_settings
-        
-        settings = get_settings()
-        scripts_path = settings.get_scripts_dir()
-        
-        # Ensure directory exists
-        scripts_path.mkdir(parents=True, exist_ok=True)
-        
-        return str(scripts_path)
+    def _update_node_app_indicator(self, node_id: str):
+        """Update the App indicator on a node after script changes."""
+        node_item = self.canvas.topology_scene._node_items.get(node_id)
+        if node_item:
+            node_item.update_app_indicator()
     
-    def _on_app_script_saved(self, node_id: str, script_path: str):
-        """Handle script saved for application node."""
+    def _on_app_script_saved(self, node_id: str, script_content: str):
+        """Handle script saved for a node."""
         node = self.network_model.get_node(node_id)
         if node:
-            # Store script path reference in node (for code generation)
-            node.app_script_path = script_path
-            self.statusBar().showMessage(f"Saved script: {script_path}", 3000)
+            # Store script content in node model
+            node.app_script = script_content
+            self._update_node_app_indicator(node_id)
+            self.statusBar().showMessage(f"Saved application script for {node.name}", 3000)
     
     def _on_subnet_applied(self, switch_id: str):
         """Handle subnet application to connected hosts."""
@@ -1981,11 +1977,10 @@ class FlowEditorDialog(QDialog):
         self._name_edit = QLineEdit(self._flow.name)
         layout.addRow("Name:", self._name_edit)
         
-        # Source node (filter out APPLICATION nodes)
+        # Source node
         self._source_combo = QComboBox()
         for node_id, node in self._network.nodes.items():
-            if node.node_type != NodeType.APPLICATION:
-                self._source_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
+            self._source_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
         
         if self._flow.source_node_id:
             idx = self._source_combo.findData(self._flow.source_node_id)
@@ -1994,11 +1989,10 @@ class FlowEditorDialog(QDialog):
         self._source_combo.currentIndexChanged.connect(self._update_app_node_combo)
         layout.addRow("Source Node:", self._source_combo)
         
-        # Target node (filter out APPLICATION nodes)
+        # Target node
         self._target_combo = QComboBox()
         for node_id, node in self._network.nodes.items():
-            if node.node_type != NodeType.APPLICATION:
-                self._target_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
+            self._target_combo.addItem(f"{node.name} ({node.node_type.name})", node_id)
         
         if self._flow.target_node_id:
             idx = self._target_combo.findData(self._flow.target_node_id)
@@ -2119,21 +2113,18 @@ class FlowEditorDialog(QDialog):
         """Update the application node combo based on source node."""
         current_selection = self._app_node_combo.currentData()
         self._app_node_combo.clear()
-        self._app_node_combo.addItem("(Select Application Node)", "")
+        self._app_node_combo.addItem("(Select Node with App Script)", "")
         
         source_node_id = self._source_combo.currentData()
         
-        # Find APPLICATION nodes attached to the source node
+        # Find nodes with application scripts
         for node_id, node in self._network.nodes.items():
-            if node.node_type == NodeType.APPLICATION:
-                attached_id = getattr(node, 'app_attached_node_id', '')
-                # Show all app nodes, but indicate which are attached to source
-                if attached_id == source_node_id:
-                    self._app_node_combo.addItem(f"⚡ {node.name} (attached)", node_id)
+            if node.has_app_script:
+                # Show nodes with app scripts
+                if node_id == source_node_id:
+                    self._app_node_combo.addItem(f"⚡ {node.name} (source)", node_id)
                 else:
-                    attached_node = self._network.nodes.get(attached_id)
-                    attached_name = attached_node.name if attached_node else "unattached"
-                    self._app_node_combo.addItem(f"{node.name} → {attached_name}", node_id)
+                    self._app_node_combo.addItem(f"⚡ {node.name}", node_id)
         
         # Restore selection if possible
         if current_selection:
