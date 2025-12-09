@@ -688,146 +688,56 @@ class SocketAppEditorDialog(QDialog):
     ) -> str:
         # Generate class name from node name
         class_name = self._sanitize_class_name(self._node.name) + "App"
-        
-        # Determine example payload based on type
-        if payload_type == "pattern" and payload_data:
-            if payload_data.startswith("0x"):
-                payload_example = f"bytes.fromhex('{payload_data[2:]}')"
-            else:
-                escaped = payload_data.replace("\\", "\\\\").replace("'", "\\'")
-                payload_example = f"b'{escaped}'"
-        elif payload_type == "sequence":
-            payload_example = "bytes(range(256))"
-        else:
-            payload_example = f"b'\\x00' * {payload_size}"
+        node_name = self._node.name
         
         return f'''"""
-Socket Application: {self._node.name}
-Protocol: {protocol}
-Target: {remote_addr}:{port}
+Socket Application: {node_name}
+Protocol: UDP
+Target: (configured at runtime)
 
 This class extends ApplicationBase to implement custom traffic generation.
-Override the methods below to customize packet content and behavior.
+Override create_payload() to customize what data is sent in each packet.
 
-Usage:
-    - create_payload(): Return bytes for each packet
-    - on_packet_sent(): Called after each send
-    - on_start()/on_stop(): Lifecycle callbacks
+The ApplicationBase handles:
+- Socket creation and connection
+- Scheduled packet transmission at send_interval
+- Start/stop timing
+
+You just need to define what payload to send!
 """
 
 from app_base import ApplicationBase
-import json
 
 
 class {class_name}(ApplicationBase):
     """
-    Custom socket application for {self._node.name}.
-    
-    Extends ApplicationBase to provide custom payload generation
-    and packet handling behavior.
+    Custom socket application for {node_name}.
     """
     
     def on_setup(self):
-        """
-        Called during application setup, before simulation starts.
-        
-        Initialize any custom state variables here.
-        """
+        """Called during setup. Initialize your state here."""
         self.message_counter = 0
-        self.log("Application initialized")
-    
-    def on_start(self):
-        """
-        Called when the application starts sending.
-        
-        For UDP: Called immediately at start_time
-        For TCP: Called after connection is established
-        """
-        self.log(f"Starting - target: {{self.target_address}}:{{self.target_port}}")
-    
-    def on_stop(self):
-        """
-        Called when the application stops.
-        
-        Use for cleanup, final statistics, or summary logging.
-        """
-        stats = self.get_stats()
-        self.log(f"Stopped - sent {{stats['packets_sent']}} packets, "
-                 f"{{stats['bytes_sent']}} bytes")
     
     def create_payload(self) -> bytes:
         """
-        Generate the payload for the next packet.
+        Generate the payload for each packet.
         
-        This method is called before each packet is sent.
-        Return different content for each packet based on your needs.
-        
-        Returns:
-            bytes: The payload data to send
+        This is called before each packet is sent.
+        Return the bytes you want to transmit.
         """
         self.message_counter += 1
         
-        # Example 1: JSON payload with metadata
-        payload = json.dumps({{
-            'seq': self.message_counter,
-            'timestamp': self.get_current_time(),
-            'sender': self.app_name,
-            'source': self.source_node_name,
-            'target': self.target_node_name,
-            'data': 'Hello from custom socket app!'
-        }}).encode('utf-8')
-        
-        return payload
-        
-        # Alternative Example 2: Static pattern
-        # return {payload_example}
-        
-        # Alternative Example 3: Simple text message
-        # msg = f"Packet {{self.message_counter}} from {{self.app_name}}"
-        # return msg.encode('utf-8')
+        # Simple "Hello World" message with counter
+        message = f"Hello World #{{self.message_counter}} from {node_name}"
+        return message.encode('utf-8')
     
     def on_packet_sent(self, sequence: int, payload: bytes):
-        """
-        Called after each packet is sent.
-        
-        Use for logging, statistics tracking, or triggering follow-up actions.
-        
-        Args:
-            sequence: Packet sequence number (1-indexed)
-            payload: The payload that was sent
-        """
-        # Log the send
+        """Called after each packet is sent. Good for logging."""
         self.log(f"Sent packet #{{sequence}}: {{len(payload)}} bytes")
-        
-        # Example: Parse and log JSON content
-        try:
-            data = json.loads(payload.decode('utf-8'))
-            self.log(f"  Content: seq={{data.get('seq')}}")
-        except:
-            pass
     
-    def on_packet_received(self, sequence: int, payload: bytes):
-        """
-        Called when a packet is received (for bidirectional apps).
-        
-        Args:
-            sequence: Receive sequence number (1-indexed)
-            payload: The received data
-        """
-        self.log(f"Received packet #{{sequence}}: {{len(payload)}} bytes")
-    
-    # =========================================================================
-    # Custom helper methods (add your own below)
-    # =========================================================================
-    
-    def generate_sensor_reading(self) -> dict:
-        """Example: Generate simulated sensor data."""
-        import random
-        return {{
-            'temperature': round(20 + random.random() * 10, 2),
-            'humidity': round(40 + random.random() * 30, 2),
-            'pressure': round(1000 + random.random() * 50, 2),
-        }}
+    def on_stop(self):
+        """Called when application stops. Print final stats."""
+        self.log(f"Finished! Sent {{self.packets_sent}} packets, {{self.bytes_sent}} bytes")
 '''
     
     def _generate_receiver_template(self, protocol: str, port: int) -> str:

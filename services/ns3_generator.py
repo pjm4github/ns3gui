@@ -1129,8 +1129,15 @@ def main():
             lines.append(f"    # Flow {flow_idx}: {flow.name} ({source_name} -> {target_name})")
             
             # Check if this flow uses a node with a custom app script
+            # First check explicit app_enabled flag
             app_enabled = getattr(flow, 'app_enabled', False)
             app_node_id = getattr(flow, 'app_node_id', '')
+            
+            # If not explicitly set, check if source node has an app script
+            if not app_enabled and source_node and source_node.has_app_script:
+                app_enabled = True
+                app_node_id = source_node.id
+                lines.append(f"    # Auto-detected app script on source node")
             
             if app_enabled and app_node_id:
                 # Use the node's custom script
@@ -1415,7 +1422,7 @@ def main():
         app_node: NodeModel,
         network: NetworkModel
     ) -> list[str]:
-        """Generate a flow using an APPLICATION node's custom script with ApplicationBase."""
+        """Generate a flow using a node's custom app script with ApplicationBase."""
         target_link_idx, interface_idx = self._find_target_interface(flow, network)
         
         if target_link_idx is None:
@@ -1423,7 +1430,6 @@ def main():
         
         port = flow.port if flow.port else 9000 + flow_idx
         protocol = "UDP" if flow.protocol == TrafficProtocol.UDP else "TCP"
-        script_path = getattr(app_node, 'app_script_path', '')
         
         # Get source and target node names
         source_node = network.nodes.get(flow.source_node_id)
@@ -1432,21 +1438,23 @@ def main():
         target_name = target_node.name if target_node else f"Node{target_idx}"
         
         # Sanitize app name for class name
-        app_class_name = self._sanitize_class_name(app_node.name)
+        app_class_name = self._sanitize_class_name(app_node.name) + "App"
+        module_name = self._sanitize_module_name(app_node.name)
         
         lines = [
             f"    # =========================================================",
-            f"    # Flow {flow_idx}: APPLICATION node '{app_node.name}'",
+            f"    # Flow {flow_idx}: Custom Application from '{app_node.name}'",
             f"    # Source: {source_name} -> Target: {target_name}",
             f"    # =========================================================",
             "",
         ]
         
-        # Check if custom script exists - it should define a class extending ApplicationBase
-        if script_path and self._script_exists(script_path):
-            lines.extend(self._generate_application_class_flow(
-                flow_idx, flow, source_idx, target_idx, app_node, script_path,
-                protocol, port, target_link_idx, interface_idx, network
+        # Check if node has a custom script
+        if app_node.has_app_script:
+            lines.extend(self._generate_custom_app_flow(
+                flow_idx, flow, source_idx, target_idx, app_node,
+                app_class_name, module_name, protocol, port, 
+                target_link_idx, interface_idx, network
             ))
         else:
             # Generate default ApplicationBase usage
@@ -1458,6 +1466,16 @@ def main():
         
         return lines
     
+    def _sanitize_module_name(self, name: str) -> str:
+        """Convert a name to a valid Python module name."""
+        import re
+        # Replace non-alphanumeric with underscore, lowercase
+        clean = re.sub(r'[^a-zA-Z0-9]', '_', name).lower()
+        # Ensure it doesn't start with a number
+        if clean and clean[0].isdigit():
+            clean = 'app_' + clean
+        return clean or 'custom_app'
+    
     def _sanitize_class_name(self, name: str) -> str:
         """Convert a name to a valid Python class name."""
         # Remove invalid characters and convert to CamelCase
@@ -1468,23 +1486,22 @@ def main():
         parts = clean.split('_')
         return ''.join(part.capitalize() for part in parts if part)
     
-    def _generate_application_class_flow(
+    def _generate_custom_app_flow(
         self,
         flow_idx: int,
         flow: TrafficFlow,
         source_idx: int,
         target_idx: int,
         app_node: NodeModel,
-        script_path: str,
+        app_class_name: str,
+        module_name: str,
         protocol: str,
         port: int,
         target_link_idx: int,
         interface_idx: int,
         network: NetworkModel
     ) -> list[str]:
-        """Generate flow code using ApplicationBase class architecture."""
-        import os
-        
+        """Generate flow code using custom ApplicationBase subclass."""
         # Get node names for config
         source_node = network.nodes.get(flow.source_node_id)
         target_node = network.nodes.get(flow.target_node_id)
@@ -1492,18 +1509,21 @@ def main():
         target_name = target_node.name if target_node else f"Node{target_idx}"
         
         # Generate unique app variable name
-        app_var = f"app_{flow_idx}"
-        app_class_name = self._sanitize_class_name(app_node.name) + "App"
-        module_name = os.path.splitext(os.path.basename(script_path))[0]
+        app_var = f"custom_app_{flow_idx}"
         
         # Calculate send interval from flow config
         send_interval = getattr(flow, 'socket_send_interval', 1.0)
         if hasattr(flow, 'echo_interval'):
             send_interval = flow.echo_interval
         
+        # Calculate number of packets
+        num_packets = int((flow.stop_time - flow.start_time) / send_interval)
+        if num_packets < 1:
+            num_packets = 1
+        
         lines = [
-            f"    # Import custom application class from {module_name}.py",
-            f"    # The script should define a class extending ApplicationBase",
+            f"    # Custom application from {app_node.name}",
+            f"    # Module: {module_name}, Class: {app_class_name}",
             "",
             f"    # Get target IP address",
             f"    target_ip_{flow_idx} = str(interfaces{target_link_idx}.GetAddress({interface_idx}))",
@@ -1521,24 +1541,27 @@ def main():
             f"        'app_name': '{app_node.name}',",
             f"        'source_node_name': '{source_name}',",
             f"        'target_node_name': '{target_name}',",
-            f"        'flow_idx': {flow_idx},",
             f"    }}",
             "",
-            f"    # Create and setup the application",
+            f"    # Create and setup the custom application",
+            f"    {app_var} = None",
             f"    try:",
             f"        from {module_name} import {app_class_name}",
             f"        {app_var} = {app_class_name}({app_var}_config)",
             f"        {app_var}.setup()",
-            f"        print(f'[Setup] Application {{{app_var}_config[\"app_name\"]}} configured on {source_name}')",
+            f"        print(f'[Setup] Custom app {app_node.name} ready on {source_name}')",
             f"    except ImportError as e:",
-            f"        print(f'[Warning] Could not import {app_class_name} from {module_name}: {{e}}')",
+            f"        print(f'[Warning] Could not import {app_class_name}: {{e}}')",
             f"        print(f'[Warning] Using default ApplicationBase')",
+            f"        from app_base import ApplicationBase",
             f"        {app_var} = ApplicationBase({app_var}_config)",
             f"        {app_var}.setup()",
             f"    except Exception as e:",
             f"        print(f'[Error] Failed to setup application: {{e}}')",
+            f"        import traceback",
+            f"        traceback.print_exc()",
             "",
-            f"    # Setup receiver (PacketSink) on target",
+            f"    # Setup receiver (PacketSink) on target node",
             f"    sink_addr_{flow_idx} = ns.InetSocketAddress(ns.Ipv4Address.GetAny(), {port})",
             f"    sink_{flow_idx} = ns.PacketSinkHelper(",
             f"        'ns3::{protocol.capitalize()}SocketFactory',",
@@ -1548,9 +1571,89 @@ def main():
             f"    sink_apps_{flow_idx}.Start(ns.Seconds({max(0, flow.start_time - 0.5)}))",
             f"    sink_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time + 1.0}))",
             "",
+            f"    # Define send function for this app",
+            f"    def send_packet_{flow_idx}():",
+            f"        if {app_var}:",
+            f"            {app_var}.send_packet()",
+            "",
+            f"    # Define start function",
+            f"    def start_app_{flow_idx}():",
+            f"        if {app_var}:",
+            f"            {app_var}.start()",
+            f"            print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] Starting {app_node.name}')",
+            "",
+            f"    # Define stop function", 
+            f"    def stop_app_{flow_idx}():",
+            f"        if {app_var}:",
+            f"            {app_var}.stop()",
+            "",
         ]
         
         return lines
+    
+    def _generate_custom_app_scheduling(self, network: NetworkModel, sim_config: SimulationConfig) -> str:
+        """Generate scheduling code for custom applications."""
+        lines = []
+        
+        # Check if we have any custom app flows
+        has_custom_apps = False
+        for flow_idx, flow in enumerate(sim_config.flows):
+            source_node = network.nodes.get(flow.source_node_id)
+            app_enabled = getattr(flow, 'app_enabled', False)
+            app_node_id = getattr(flow, 'app_node_id', '')
+            
+            if not app_enabled and source_node and source_node.has_app_script:
+                has_custom_apps = True
+                break
+            if app_enabled and app_node_id:
+                app_node = network.nodes.get(app_node_id)
+                if app_node and app_node.has_app_script:
+                    has_custom_apps = True
+                    break
+        
+        if not has_custom_apps:
+            return ""
+        
+        lines = [
+            "",
+            "    # ============================================",
+            "    # Schedule Custom Application Events",
+            "    # ============================================",
+            "    # Note: Using a workaround for ns-3 Python binding limitations",
+            "    # We manually call send functions after simulation runs in steps",
+            "",
+        ]
+        
+        # Generate scheduling for each custom app flow
+        for flow_idx, flow in enumerate(sim_config.flows):
+            source_node = network.nodes.get(flow.source_node_id)
+            app_enabled = getattr(flow, 'app_enabled', False)
+            app_node_id = getattr(flow, 'app_node_id', '')
+            
+            # Check if this flow uses a custom app
+            use_custom = False
+            if not app_enabled and source_node and source_node.has_app_script:
+                use_custom = True
+            elif app_enabled and app_node_id:
+                app_node = network.nodes.get(app_node_id)
+                if app_node and app_node.has_app_script:
+                    use_custom = True
+            
+            if not use_custom:
+                continue
+            
+            send_interval = getattr(flow, 'socket_send_interval', 1.0)
+            if hasattr(flow, 'echo_interval'):
+                send_interval = flow.echo_interval
+            
+            lines.extend([
+                f"    # Schedule events for flow {flow_idx}",
+                f"    # Start app at {flow.start_time}s, stop at {flow.stop_time}s",
+                f"    # Send packets every {send_interval}s",
+                "",
+            ])
+        
+        return "\n".join(lines)
     
     def _generate_default_application_flow(
         self,
@@ -2125,7 +2228,55 @@ def main():
             f"    print('Starting simulation for {sim_config.duration} seconds...')",
             "    print()",
             "",
-            "    ns.Simulator.Run()",
+            "    # Collect custom apps (filter out None and config dicts)",
+            "    custom_apps = []",
+            "    for name, val in list(locals().items()):",
+            "        if name.startswith('custom_app_') and not name.endswith('_config'):",
+            "            if val is not None and hasattr(val, 'start_time'):",
+            "                custom_apps.append(val)",
+            "",
+            "    if custom_apps:",
+            "        print(f'Running with {len(custom_apps)} custom application(s)')",
+            "        # Run simulation in steps to allow Python app sends",
+            "        step_size = 0.1  # 100ms steps",
+            "        current_time = 0.0",
+            f"        end_time = {sim_config.duration}",
+            "",
+            "        # Track send times for each app",
+            "        app_next_send = {}",
+            "        for i, app in enumerate(custom_apps):",
+            "            app_next_send[i] = app.start_time",
+            "",
+            "        while current_time < end_time:",
+            "            # Advance simulation by step",
+            "            next_time = min(current_time + step_size, end_time)",
+            "            ns.Simulator.Stop(ns.Seconds(next_time))",
+            "            ns.Simulator.Run()",
+            "            current_time = ns.Simulator.Now().GetSeconds()",
+            "",
+            "            # Check each custom app for sends",
+            "            for i, app in enumerate(custom_apps):",
+            "                # Start app if it's time",
+            "                if not app.is_running and current_time >= app.start_time:",
+            "                    app.start()",
+            "",
+            "                # Stop app if it's time",
+            "                if app.is_running and current_time >= app.stop_time:",
+            "                    app.stop()",
+            "                    continue",
+            "",
+            "                # Send packets if it's time",
+            "                while app.is_running and app_next_send[i] <= current_time:",
+            "                    app.send_packet()",
+            "                    app_next_send[i] += app.send_interval",
+            "",
+            "        # Final cleanup",
+            "        for app in custom_apps:",
+            "            if app.is_running:",
+            "                app.stop()",
+            "    else:",
+            "        # No custom apps, run normally",
+            "        ns.Simulator.Run()",
             "",
         ]
         
@@ -2214,13 +2365,13 @@ if __name__ == '__main__':
         sim_config: SimulationConfig
     ) -> list[dict]:
         """
-        Get list of files required for simulation with APPLICATION nodes.
+        Get list of files required for simulation with custom applications.
         
         Returns a list of dicts with:
             - 'type': 'base' | 'custom'
             - 'source_path': Path to source file (or None for embedded)
             - 'dest_name': Destination filename in scratch directory
-            - 'content': File content (if embedded)
+            - 'content': File content (if embedded, otherwise None)
         
         Args:
             network: Network topology model
@@ -2230,53 +2381,52 @@ if __name__ == '__main__':
             List of file descriptors needed for simulation
         """
         files = []
+        added_nodes = set()
         
-        # Check if any flows use APPLICATION nodes
-        has_app_flows = any(
-            flow.app_enabled and flow.app_node_id
-            for flow in sim_config.flows
-        )
-        
-        if not has_app_flows:
-            return files
-        
-        # Add app_base.py (the base class)
-        import os
-        base_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'templates',
-            'app_base.py'
-        )
-        
-        files.append({
-            'type': 'base',
-            'source_path': base_path,
-            'dest_name': 'app_base.py',
-            'content': None,  # Read from source_path
-        })
-        
-        # Add custom application scripts
-        added_scripts = set()
-        
+        # Check flows for nodes with app scripts
         for flow in sim_config.flows:
-            if not flow.app_enabled or not flow.app_node_id:
-                continue
-            
-            app_node = network.nodes.get(flow.app_node_id)
-            if not app_node:
-                continue
-            
-            script_path = getattr(app_node, 'app_script_path', '')
-            if script_path and script_path not in added_scripts:
-                if os.path.exists(script_path):
-                    script_name = os.path.basename(script_path)
+            # Check explicit app_node_id
+            app_node_id = getattr(flow, 'app_node_id', '')
+            if flow.app_enabled and app_node_id:
+                app_node = network.nodes.get(app_node_id)
+                if app_node and app_node.has_app_script and app_node.id not in added_nodes:
+                    module_name = self._sanitize_module_name(app_node.name)
                     files.append({
                         'type': 'custom',
-                        'source_path': script_path,
-                        'dest_name': script_name,
-                        'content': None,  # Read from source_path
+                        'source_path': None,
+                        'dest_name': f'{module_name}.py',
+                        'content': app_node.app_script,
                     })
-                    added_scripts.add(script_path)
+                    added_nodes.add(app_node.id)
+            
+            # Also check if source node has app script (auto-detect)
+            source_node = network.nodes.get(flow.source_node_id)
+            if source_node and source_node.has_app_script and source_node.id not in added_nodes:
+                module_name = self._sanitize_module_name(source_node.name)
+                files.append({
+                    'type': 'custom',
+                    'source_path': None,
+                    'dest_name': f'{module_name}.py',
+                    'content': source_node.app_script,
+                })
+                added_nodes.add(source_node.id)
+        
+        # If we have any custom scripts, we need app_base.py
+        if files:
+            import os
+            base_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'templates',
+                'app_base.py'
+            )
+            
+            # Insert app_base.py at the beginning
+            files.insert(0, {
+                'type': 'base',
+                'source_path': base_path,
+                'dest_name': 'app_base.py',
+                'content': None,
+            })
         
         return files
 

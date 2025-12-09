@@ -790,6 +790,9 @@ class MainWindow(QMainWindow):
             self._show_ns3_config_dialog()
             return
         
+        # Auto-generate flows for nodes with app scripts that aren't in a flow
+        self._auto_generate_app_flows()
+        
         # Show simulation configuration dialog
         dialog = SimulationConfigDialog(self.network_model, self.sim_config, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -862,6 +865,9 @@ class MainWindow(QMainWindow):
         # Save script to workspace (local copy)
         self._save_script_to_workspace(script)
         
+        # Get required files (app_base.py, custom scripts)
+        required_files = generator.get_required_files(self.network_model, self.sim_config)
+        
         # Start simulation
         self.simulation_state.status = SimulationStatus.RUNNING
         self.simulation_state.end_time = self.sim_config.duration
@@ -869,10 +875,87 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Running ns-3 simulation...")
         
         # Run simulation
-        success = self.sim_manager.run_simulation(script, self._sim_output_dir)
+        success = self.sim_manager.run_simulation(script, self._sim_output_dir, required_files)
         if not success:
             self.simulation_state.set_error("Failed to start simulation")
             self.toolbar.set_running(False)
+    
+    def _auto_generate_app_flows(self):
+        """
+        Auto-generate flows for nodes with app scripts that aren't already in a flow.
+        
+        This allows users to just attach an app script to a node and run without
+        manually creating a traffic flow.
+        """
+        from models.simulation import TrafficFlow, TrafficApplication, TrafficProtocol
+        
+        # Find nodes with app scripts
+        nodes_with_scripts = [
+            node for node in self.network_model.nodes.values()
+            if node.has_app_script
+        ]
+        
+        if not nodes_with_scripts:
+            return
+        
+        # Find which nodes are already sources in existing flows
+        existing_sources = {flow.source_node_id for flow in self.sim_config.flows}
+        
+        for source_node in nodes_with_scripts:
+            if source_node.id in existing_sources:
+                continue  # Already has a flow
+            
+            # Find a suitable target node (any other node that's connected)
+            target_node = self._find_connected_target(source_node)
+            if not target_node:
+                continue
+            
+            # Create a new flow
+            flow = TrafficFlow(
+                name=f"{source_node.name}_app_flow",
+                source_node_id=source_node.id,
+                target_node_id=target_node.id,
+                application=TrafficApplication.CUSTOM_SOCKET,
+                protocol=TrafficProtocol.UDP,
+                start_time=1.0,
+                stop_time=9.0,
+                app_enabled=True,
+                app_node_id=source_node.id,
+            )
+            self.sim_config.flows.append(flow)
+            self.statusBar().showMessage(
+                f"Auto-created flow: {source_node.name} → {target_node.name}", 3000
+            )
+    
+    def _find_connected_target(self, source_node):
+        """Find a suitable target node connected to the source."""
+        from models.network import NodeType
+        
+        # Get all nodes connected to source via links
+        connected_ids = set()
+        for link in self.network_model.links.values():
+            if link.source_node_id == source_node.id:
+                connected_ids.add(link.target_node_id)
+            elif link.target_node_id == source_node.id:
+                connected_ids.add(link.source_node_id)
+        
+        # If directly connected, prefer hosts over routers/switches
+        for node_id in connected_ids:
+            node = self.network_model.nodes.get(node_id)
+            if node and node.node_type == NodeType.HOST and node.id != source_node.id:
+                return node
+        
+        # Otherwise, find any host in the network (for multi-hop paths)
+        for node in self.network_model.nodes.values():
+            if node.node_type == NodeType.HOST and node.id != source_node.id:
+                return node
+        
+        # Fallback: any other node
+        for node in self.network_model.nodes.values():
+            if node.id != source_node.id:
+                return node
+        
+        return None
     
     def _save_script_to_workspace(self, script: str):
         """

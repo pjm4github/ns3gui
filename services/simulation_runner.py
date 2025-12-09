@@ -415,13 +415,14 @@ class SimulationRunner(QObject):
     def is_running(self) -> bool:
         return self._process is not None and self._process.state() == QProcess.ProcessState.Running
     
-    def run_script(self, script_content: str, output_dir: str) -> bool:
+    def run_script(self, script_content: str, output_dir: str, required_files: list = None) -> bool:
         """
         Run an ns-3 Python script.
         
         Args:
             script_content: The Python script content
             output_dir: Directory for output files (Windows path)
+            required_files: List of additional files needed (from get_required_files)
             
         Returns:
             True if started successfully
@@ -446,10 +447,46 @@ class SimulationRunner(QObject):
         # Clear output buffer
         self._output_buffer = []
         
+        # Store required files for later writing
+        self._required_files = required_files or []
+        
         if self._use_wsl:
             return self._run_script_wsl(script_content, output_dir)
         else:
             return self._run_script_native(script_content, output_dir)
+    
+    def _write_required_files(self, scratch_dir: str) -> bool:
+        """
+        Write required support files to the scratch directory.
+        
+        Args:
+            scratch_dir: Path to ns-3 scratch directory
+            
+        Returns:
+            True if all files written successfully
+        """
+        if not self._required_files:
+            return True
+        
+        for file_info in self._required_files:
+            dest_path = os.path.join(scratch_dir, file_info['dest_name'])
+            try:
+                if file_info['content']:
+                    # Write embedded content
+                    with open(dest_path, 'w') as f:
+                        f.write(file_info['content'])
+                    self.output_line.emit(f"Wrote {file_info['dest_name']} (embedded)")
+                elif file_info['source_path'] and os.path.exists(file_info['source_path']):
+                    # Copy from source path
+                    shutil.copy2(file_info['source_path'], dest_path)
+                    self.output_line.emit(f"Copied {file_info['dest_name']}")
+                else:
+                    self.output_line.emit(f"Warning: Could not find source for {file_info['dest_name']}")
+            except Exception as e:
+                self.error.emit(f"Failed to write {file_info['dest_name']}: {e}")
+                return False
+        
+        return True
     
     def _run_script_native(self, script_content: str, output_dir: str) -> bool:
         """Run script natively (Linux/macOS)."""
@@ -471,6 +508,10 @@ class SimulationRunner(QObject):
         # Save script to scratch directory for ns-3
         scratch_dir = os.path.join(self._ns3_path, "scratch")
         os.makedirs(scratch_dir, exist_ok=True)
+        
+        # Write required support files (app_base.py, custom scripts, etc.)
+        if not self._write_required_files(scratch_dir):
+            return False
         
         self._script_path = os.path.join(scratch_dir, "gui_simulation.py")
         try:
@@ -549,6 +590,10 @@ class SimulationRunner(QObject):
             self.error.emit(f"Failed to write script: {e}")
             return False
         
+        # Write required support files to output dir (will be copied to scratch)
+        if not self._write_required_files(output_dir):
+            return False
+        
         self._script_path = script_path
         
         # Build WSL command
@@ -561,16 +606,22 @@ class SimulationRunner(QObject):
         else:
             ns3_path_expanded = ns3_path
         
+        # Build copy commands for required files
+        copy_commands = [f'cp "{wsl_script_path}" scratch/gui_simulation.py']
+        for file_info in (self._required_files or []):
+            src_path = os.path.join(output_dir, file_info['dest_name'])
+            wsl_src = windows_to_wsl_path(src_path)
+            copy_commands.append(f'cp "{wsl_src}" scratch/{file_info["dest_name"]}')
+        
+        copy_cmd = '\n'.join(copy_commands)
+        
         # Create the bash command to run
-        # For ns-3.45+, we need to run Python scripts properly
-        # Option 1: Use ns3 run with scratch-simulator style name
-        # Option 2: Run Python directly with proper PYTHONPATH
         bash_cmd = f'''
 set -e
 cd {ns3_path_expanded}
 echo "NS-3 Directory: $(pwd)"
-echo "Copying script..."
-cp "{wsl_script_path}" scratch/gui_simulation.py
+echo "Copying files..."
+{copy_cmd}
 
 # Try running with ns3 run first
 echo "Attempting to run simulation..."
@@ -750,7 +801,8 @@ class NS3SimulationManager(QObject):
     def run_simulation(
         self, 
         script_content: str, 
-        output_dir: str
+        output_dir: str,
+        required_files: list = None
     ) -> bool:
         """
         Run a simulation with generated script.
@@ -758,6 +810,7 @@ class NS3SimulationManager(QObject):
         Args:
             script_content: Generated ns-3 Python script
             output_dir: Directory for output files (always Windows path on Windows)
+            required_files: List of additional files to write (from get_required_files)
             
         Returns:
             True if started successfully
@@ -781,7 +834,7 @@ class NS3SimulationManager(QObject):
         self._runner.output_line.connect(self.outputReceived)
         self._runner.progress.connect(self.progressUpdated)
         
-        return self._runner.run_script(script_content, output_dir)
+        return self._runner.run_script(script_content, output_dir, required_files)
     
     def stop_simulation(self):
         """Stop the running simulation."""
