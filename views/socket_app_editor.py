@@ -379,152 +379,144 @@ class SocketAppEditorDialog(QDialog):
     
     def _setup_ui(self):
         self.setWindowTitle(f"Socket Application Editor - {self._node.name}")
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(800, 600)
         self.resize(1000, 800)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Toolbar
+        # Compact toolbar with all actions
         toolbar = QToolBar()
         toolbar.setStyleSheet("""
             QToolBar {
                 background: #21252B;
                 border-bottom: 1px solid #181A1F;
-                padding: 4px;
-                spacing: 4px;
+                padding: 2px 4px;
+                spacing: 2px;
             }
             QToolButton {
                 background: transparent;
                 border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
+                border-radius: 3px;
+                padding: 4px 8px;
                 color: #ABB2BF;
-                font-size: 12px;
+                font-size: 11px;
             }
             QToolButton:hover {
                 background: #2C313A;
             }
-            QToolButton:pressed {
-                background: #3E4451;
-            }
         """)
         
-        # Toolbar actions
-        save_btn = QPushButton("💾 Save")
-        save_btn.setStyleSheet(self._button_style("#3B82F6"))
-        save_btn.clicked.connect(self._save_script)
-        toolbar.addWidget(save_btn)
-        
-        reset_btn = QPushButton("🔄 Reset Template")
-        reset_btn.setStyleSheet(self._button_style("#6B7280"))
-        reset_btn.clicked.connect(self._reset_to_template)
-        toolbar.addWidget(reset_btn)
+        # Node name label (left side)
+        self._path_label = QLabel(f"📝 {self._node.name}.py")
+        self._path_label.setStyleSheet("color: #ABB2BF; padding: 0 8px; font-weight: bold;")
+        toolbar.addWidget(self._path_label)
         
         toolbar.addSeparator()
         
+        # Toolbar actions - compact buttons
+        save_btn = QPushButton("💾 Save")
+        save_btn.setStyleSheet(self._compact_button_style("#3B82F6"))
+        save_btn.clicked.connect(self._save_script)
+        toolbar.addWidget(save_btn)
+        
         validate_btn = QPushButton("✓ Validate")
-        validate_btn.setStyleSheet(self._button_style("#10B981"))
+        validate_btn.setStyleSheet(self._compact_button_style("#10B981"))
         validate_btn.clicked.connect(self._validate_script)
         toolbar.addWidget(validate_btn)
+        
+        reset_btn = QPushButton("🔄 Reset")
+        reset_btn.setStyleSheet(self._compact_button_style("#6B7280"))
+        reset_btn.clicked.connect(self._reset_to_template)
+        toolbar.addWidget(reset_btn)
         
         # Spacer
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
         
-        # Node name label
-        self._path_label = QLabel(f"📝 {self._node.name}")
-        self._path_label.setStyleSheet("color: #636D83; padding: 0 10px;")
-        toolbar.addWidget(self._path_label)
+        # Help toggle button
+        self._help_btn = QPushButton("? Help")
+        self._help_btn.setCheckable(True)
+        self._help_btn.setStyleSheet(self._compact_button_style("#6B7280"))
+        self._help_btn.clicked.connect(self._toggle_help)
+        toolbar.addWidget(self._help_btn)
+        
+        toolbar.addSeparator()
+        
+        # Cancel and Save & Close buttons in toolbar (right side)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(self._compact_button_style("#6B7280"))
+        cancel_btn.clicked.connect(self._on_cancel)
+        toolbar.addWidget(cancel_btn)
+        
+        save_close_btn = QPushButton("Save && Close")
+        save_close_btn.setStyleSheet(self._compact_button_style("#3B82F6"))
+        save_close_btn.clicked.connect(self._on_save_and_close)
+        toolbar.addWidget(save_close_btn)
         
         layout.addWidget(toolbar)
         
-        # Main content - splitter with editor and help
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
+        # Main content area - editor with optional help panel
+        self._content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._content_splitter.setStyleSheet("""
             QSplitter::handle {
                 background: #181A1F;
                 width: 2px;
             }
         """)
         
-        # Code editor
-        editor_container = QWidget()
-        editor_layout = QVBoxLayout(editor_container)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.setSpacing(0)
-        
-        # Editor header
-        editor_header = QLabel(f"  📝 {self._node.name}.py")
-        editor_header.setStyleSheet("""
-            background: #21252B;
-            color: #ABB2BF;
-            padding: 8px;
-            font-weight: bold;
-            border-bottom: 1px solid #181A1F;
-        """)
-        editor_layout.addWidget(editor_header)
-        
+        # Code editor (takes full space)
         self._editor = CodeEditor()
-        editor_layout.addWidget(self._editor)
+        self._content_splitter.addWidget(self._editor)
         
-        splitter.addWidget(editor_container)
+        # Help panel (hidden by default)
+        self._help_panel = self._create_help_panel()
+        self._help_panel.hide()
+        self._content_splitter.addWidget(self._help_panel)
         
-        # Help panel
-        help_panel = self._create_help_panel()
-        splitter.addWidget(help_panel)
+        self._content_splitter.setSizes([1000, 0])
+        layout.addWidget(self._content_splitter, 1)  # stretch factor 1 to expand
         
-        splitter.setSizes([700, 300])
-        layout.addWidget(splitter)
-        
-        # Status bar
+        # Minimal status bar
         self._status_bar = QStatusBar()
         self._status_bar.setStyleSheet("""
             QStatusBar {
                 background: #21252B;
                 color: #636D83;
                 border-top: 1px solid #181A1F;
+                padding: 2px;
+                font-size: 11px;
+            }
+            QStatusBar::item {
+                border: none;
             }
         """)
+        self._status_bar.setMaximumHeight(22)
         self._update_status("Ready")
         layout.addWidget(self._status_bar)
-        
-        # Button bar
-        button_bar = QFrame()
-        button_bar.setStyleSheet("""
-            QFrame {
-                background: #282C34;
-                border-top: 1px solid #181A1F;
-                padding: 8px;
-            }
-        """)
-        button_layout = QHBoxLayout(button_bar)
-        button_layout.setContentsMargins(16, 8, 16, 8)
-        
-        button_layout.addStretch()
-        
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(self._button_style("#6B7280"))
-        cancel_btn.clicked.connect(self._on_cancel)
-        button_layout.addWidget(cancel_btn)
-        
-        save_close_btn = QPushButton("Save && Close")
-        save_close_btn.setStyleSheet(self._button_style("#3B82F6"))
-        save_close_btn.clicked.connect(self._on_save_and_close)
-        button_layout.addWidget(save_close_btn)
-        
-        layout.addWidget(button_bar)
     
-    def _button_style(self, color: str) -> str:
+    def _toggle_help(self):
+        """Toggle the help panel visibility."""
+        if self._help_panel.isVisible():
+            self._help_panel.hide()
+            self._content_splitter.setSizes([1000, 0])
+            self._help_btn.setChecked(False)
+        else:
+            self._help_panel.show()
+            self._content_splitter.setSizes([700, 300])
+            self._help_btn.setChecked(True)
+    
+    def _compact_button_style(self, color: str) -> str:
         return f"""
             QPushButton {{
                 background: {color};
                 color: white;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
+                border-radius: 3px;
+                padding: 4px 10px;
+                font-size: 11px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -532,6 +524,9 @@ class SocketAppEditorDialog(QDialog):
             }}
             QPushButton:pressed {{
                 background: {color}BB;
+            }}
+            QPushButton:checked {{
+                background: {color}AA;
             }}
         """
     
@@ -579,49 +574,55 @@ class SocketAppEditorDialog(QDialog):
             code { background: #2C313A; padding: 2px 5px; border-radius: 3px; color: #98C379; }
             .func { color: #C678DD; }
             .note { background: #3E4451; padding: 8px; border-radius: 4px; margin: 8px 0; }
+            pre { background: #2C313A; padding: 8px; border-radius: 4px; overflow-x: auto; }
         </style>
         
-        <h3>Required Functions</h3>
-        <p>Your script must define these functions:</p>
-        <p><code><span class="func">create_payload</span>()</code> → bytes<br>
-        Returns the packet payload data</p>
+        <h3>Override Methods</h3>
+        <p>Your script can override these methods:</p>
         
-        <p><code><span class="func">on_packet_sent</span>(packet_num, payload)</code><br>
-        Called after each packet is sent</p>
+        <p><code><span class="func">create_payload</span>(self)</code> → bytes<br>
+        Returns the packet payload data to send</p>
         
-        <p><code><span class="func">on_packet_received</span>(packet_data)</code><br>
-        Called when a packet is received (receiver only)</p>
+        <p><code><span class="func">on_packet_sent</span>(self, sequence, payload)</code><br>
+        Called after each packet is sent<br>
+        <i>sequence</i>: packet number (1-indexed)<br>
+        <i>payload</i>: the bytes that were sent</p>
         
-        <h3>Available Variables</h3>
-        <p><code>node_index</code> - This node's index<br>
-        <code>remote_address</code> - Target IP address<br>
-        <code>remote_port</code> - Target port<br>
-        <code>protocol</code> - "UDP" or "TCP"<br>
-        <code>packet_size</code> - Configured size<br>
-        <code>send_count</code> - Number of packets<br>
-        <code>send_interval</code> - Time between sends</p>
-        
-        <h3>ns-3 API</h3>
-        <p><code>ns.Packet(data, size)</code> - Create packet<br>
-        <code>ns.Seconds(t)</code> - Time value<br>
-        <code>ns.Simulator.Schedule(time, func)</code> - Schedule<br>
-        <code>ns.Simulator.Now()</code> - Current time</p>
-        
-        <h3>Payload Examples</h3>
-        <p><b>String:</b><br>
-        <code>b'Hello World'</code></p>
-        
-        <p><b>Hex data:</b><br>
-        <code>bytes.fromhex('DEADBEEF')</code></p>
-        
-        <p><b>JSON:</b><br>
-        <code>json.dumps({'temp': 23.5}).encode()</code></p>
-        
-        <p><b>Struct (binary):</b><br>
-        <code>struct.pack('!HI', 1, 12345)</code></p>
+        <p><code><span class="func">on_packet_received</span>(self, sequence, payload)</code><br>
+        Called when a packet is received<br>
+        <i>sequence</i>: receive count (1-indexed)<br>
+        <i>payload</i>: received bytes</p>
         
         <div class="note">
-        <b>💡 Tip:</b> Use <code>print()</code> for debug output.
+        <b>Example on_packet_received:</b>
+        <pre>def on_packet_received(self, sequence, payload):
+    self.log(f"Received #{sequence}: {len(payload)} bytes")
+    try:
+        text = payload.decode('utf-8')
+        self.log(f"  Content: {text}")
+    except UnicodeDecodeError:
+        self.log(f"  Hex: {payload.hex()}")</pre>
+        </div>
+        
+        <h3>Available Methods</h3>
+        <p><code>self.log(message)</code> - Print to console<br>
+        <code>self.get_stats()</code> - Get packet stats</p>
+        
+        <h3>Available Variables</h3>
+        <p><code>self.target_address</code> - Target IP<br>
+        <code>self.target_port</code> - Target port<br>
+        <code>self.packets_sent</code> - Send count<br>
+        <code>self.bytes_sent</code> - Bytes sent<br>
+        <code>self.packets_received</code> - Receive count</p>
+        
+        <h3>Payload Examples</h3>
+        <p><b>String:</b> <code>b'Hello World'</code></p>
+        <p><b>Hex:</b> <code>bytes.fromhex('DEADBEEF')</code></p>
+        <p><b>JSON:</b> <code>json.dumps({'temp': 23.5}).encode()</code></p>
+        <p><b>Struct:</b> <code>struct.pack('!HI', 1, 12345)</code></p>
+        
+        <div class="note">
+        <b>💡 Tip:</b> Use <code>self.log()</code> for debug output.
         It will appear in the simulation console.
         </div>
         """
@@ -734,6 +735,25 @@ class {class_name}(ApplicationBase):
     def on_packet_sent(self, sequence: int, payload: bytes):
         """Called after each packet is sent. Good for logging."""
         self.log(f"Sent packet #{{sequence}}: {{len(payload)}} bytes")
+    
+    def on_packet_received(self, sequence: int, payload: bytes):
+        """
+        Called when a packet is received.
+        
+        Args:
+            sequence: Receive sequence number (1-indexed)
+            payload: The received data as bytes
+        """
+        # Log the received data to the simulation console
+        self.log(f"Received packet #{{sequence}}: {{len(payload)}} bytes")
+        
+        # Try to decode as UTF-8 text
+        try:
+            text = payload.decode('utf-8')
+            self.log(f"  Content: {{text}}")
+        except UnicodeDecodeError:
+            # Binary data - show as hex
+            self.log(f"  Hex: {{payload.hex()}}")
     
     def on_stop(self):
         """Called when application stops. Print final stats."""

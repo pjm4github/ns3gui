@@ -151,12 +151,107 @@ class SimulationToolbar(QToolBar):
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("color: #6B7280; font-size: 12px;")
         self.addWidget(self.status_label)
+        
+        self.addSeparator()
+        
+        # Simulation time display - always visible
+        self._total_time = 10.0  # Default
+        self._current_time = 0.0
+        self._is_running = False
+        self._is_completed = False
+        
+        self.time_label = QLabel("0.000 sec")
+        self.time_label.setStyleSheet("""
+            QLabel {
+                color: #374151;
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Consolas', 'Monaco', monospace;
+                padding: 4px 12px;
+                background: #F3F4F6;
+                border: 1px solid #D1D5DB;
+                border-radius: 4px;
+                min-width: 100px;
+            }
+        """)
+        self.addWidget(self.time_label)
     
     def set_running(self, running: bool):
         """Update button states for running/stopped."""
         self.run_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.clear_btn.setEnabled(not running)
+        self._is_running = running
+        
+        if running:
+            self._is_completed = False
+            self._current_time = 0.0
+            self._update_time_display()
+    
+    def set_total_time(self, total_time: float):
+        """Set the total simulation duration."""
+        self._total_time = total_time
+        self._update_time_display()
+    
+    def reset_time(self):
+        """Reset time display for a new simulation."""
+        self._current_time = 0.0
+        self._is_completed = False
+        self._update_time_display()
+    
+    def update_simulation_time(self, current_time: float, total_time: float = None):
+        """Update the simulation time display."""
+        self._current_time = current_time
+        if total_time is not None:
+            self._total_time = total_time
+        
+        # Check if simulation completed
+        if current_time >= self._total_time - 0.001:
+            self._is_completed = True
+        
+        self._update_time_display()
+    
+    def _update_time_display(self):
+        """Update the time label appearance based on state."""
+        if self._is_completed:
+            # Completed state - show end time with indicator
+            text = f"{self._current_time:.3f} sec (end)"
+            bg_color = "#DCFCE7"  # Light green
+            text_color = "#166534"  # Dark green
+            border_color = "#86EFAC"
+        elif self._is_running:
+            # Running state - show current time with progress color
+            text = f"{self._current_time:.3f} sec"
+            progress = self._current_time / self._total_time if self._total_time > 0 else 0
+            if progress < 0.5:
+                bg_color = "#DBEAFE"  # Light blue
+                text_color = "#1E40AF"  # Dark blue
+                border_color = "#93C5FD"
+            else:
+                bg_color = "#FEF3C7"  # Light amber
+                text_color = "#92400E"  # Dark amber
+                border_color = "#FCD34D"
+        else:
+            # Idle state
+            text = f"{self._current_time:.3f} sec"
+            bg_color = "#F3F4F6"  # Light gray
+            text_color = "#374151"  # Dark gray
+            border_color = "#D1D5DB"
+        
+        self.time_label.setText(text)
+        self.time_label.setStyleSheet(f"""
+            QLabel {{
+                color: {text_color};
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Consolas', 'Monaco', monospace;
+                padding: 4px 12px;
+                background: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                min-width: 100px;
+            }}
+        """)
 
 
 class MainWindow(QMainWindow):
@@ -998,11 +1093,31 @@ class MainWindow(QMainWindow):
             self.sim_manager.stop_simulation()
         self.simulation_state.status = SimulationStatus.IDLE
         self.toolbar.set_running(False)
+        
+        # Clear any link activity highlighting
+        self.canvas.topology_scene.clear_all_link_activity()
+        
         self.statusBar().showMessage("Simulation stopped", 2000)
     
     def _on_simulation_started(self):
         """Handle simulation start."""
         self.statusBar().showMessage("Simulation running...")
+        
+        # Reset and configure toolbar time display
+        self.toolbar.reset_time()
+        self.toolbar.set_total_time(self.sim_config.duration)
+        
+        # Clear sender-to-target mapping from previous run
+        self._sender_targets = {}
+        
+        # Pre-populate sender-to-target mapping from flow configuration
+        # This maps source node NAME to target node NAME for path animation
+        self._sender_to_target_node = {}
+        for flow in self.sim_config.flows:
+            source_node = self.network_model.nodes.get(flow.source_node_id)
+            target_node = self.network_model.nodes.get(flow.target_node_id)
+            if source_node and target_node:
+                self._sender_to_target_node[source_node.name] = target_node.name
         
         # Start console logging session
         self.stats_panel.start_console_session()
@@ -1021,6 +1136,12 @@ class MainWindow(QMainWindow):
     def _on_simulation_finished(self, results: SimulationResults):
         """Handle simulation completion."""
         self.toolbar.set_running(False)
+        
+        # Update time display to show final time (stays visible)
+        self.toolbar.update_simulation_time(self.sim_config.duration, self.sim_config.duration)
+        
+        # Don't clear link activity immediately - let the retriggerable timers
+        # run their course so the last packet flash completes naturally
         
         if results.success:
             self.simulation_state.status = SimulationStatus.COMPLETED
@@ -1080,16 +1201,87 @@ class MainWindow(QMainWindow):
         """Handle simulation output line."""
         self.stats_panel.append_console_line(line)
         
-        # Try to extract progress from output (e.g., "Time: 5.0s")
-        if "Time:" in line or "time=" in line.lower():
-            import re
-            match = re.search(r'[Tt]ime[=:]\s*(\d+\.?\d*)', line)
-            if match:
+        import re
+        
+        # Parse simulation time from output like "[1.500s]" or "Time: 5.0s"
+        time_match = re.search(r'\[(\d+\.?\d*)s\]', line)
+        if time_match:
+            try:
+                current_time = float(time_match.group(1))
+                self.toolbar.update_simulation_time(current_time, self.sim_config.duration)
+                self.simulation_state.current_time = current_time
+            except ValueError:
+                pass
+        else:
+            # Alternative format: "Time: 5.0s" or "time=5.0"
+            time_match2 = re.search(r'[Tt]ime[=:]\s*(\d+\.?\d*)', line)
+            if time_match2:
                 try:
-                    current_time = float(match.group(1))
-                    self.stats_panel.set_progress(current_time, self.sim_config.duration)
+                    current_time = float(time_match2.group(1))
+                    self.toolbar.update_simulation_time(current_time, self.sim_config.duration)
+                    self.simulation_state.current_time = current_time
                 except ValueError:
                     pass
+        
+        # Parse IP address assignments from output
+        # Format: "Link 0: 10.1.1.1 (host_9eae) <-> switch_9833 (switch)"
+        # or: "10.1.1.1:49153 -> 10.1.1.2:9"
+        ip_assign_match = re.search(r'Link \d+:\s+([\d.]+)\s+\(([^)]+)\)\s+<->\s+([^\s]+)', line)
+        if ip_assign_match:
+            ip = ip_assign_match.group(1)
+            node_name = ip_assign_match.group(2)
+            self.canvas.topology_scene.set_node_ip(node_name, ip)
+            # Refresh property panel to show new IP
+            self.property_panel.refresh_port_displays()
+        
+        # Also parse from flow statistics output
+        # Format: "10.1.1.1:49153 -> 10.1.1.2:9"
+        flow_match = re.search(r'([\d.]+):(\d+)\s+->\s+([\d.]+):(\d+)', line)
+        if flow_match:
+            # This gives us the IPs used in flows, but we've already captured them above
+            pass
+        
+        # Parse "Starting" events for app startup indication and capture target
+        # Format: "[1.500s] [host_9eae] Starting - target: 10.1.1.2:9"
+        start_match = re.search(r'\[[\d.]+s\]\s+\[([^\]]+)\]\s+Starting\s*-\s*target:\s*([\d.]+)', line)
+        if start_match:
+            node_name = start_match.group(1)
+            target_ip = start_match.group(2)
+            # Store the target IP for this sender to use in path animation
+            if not hasattr(self, '_sender_targets'):
+                self._sender_targets = {}
+            self._sender_targets[node_name] = target_ip
+        
+        # Parse packet send events from app output
+        # Format: "[1.500s] [host_9eae] Sent packet #1: 29 bytes"
+        send_match = re.search(r'\[[\d.]+s\]\s+\[([^\]]+)\]\s+Sent packet', line)
+        if send_match:
+            sender_name = send_match.group(1)
+            # Use pre-populated flow mapping (set at simulation start)
+            target_name = getattr(self, '_sender_to_target_node', {}).get(sender_name)
+            if target_name:
+                # Flash entire path from sender to target using node names
+                self.canvas.topology_scene.flash_path(sender_name, target_name, duration_ms=1500)
+            else:
+                # Fallback: flash all links connected to sender
+                self.canvas.topology_scene.flash_links_for_node(sender_name, duration_ms=1500)
+    
+    def _get_node_name_by_ip(self, ip: str) -> str:
+        """Get node name by assigned IP address."""
+        for node in self.canvas.topology_scene.network_model.nodes.values():
+            for port in node.ports:
+                if port.assigned_ip == ip:
+                    return node.name
+        return ""
+    
+    def _get_sender_ip(self, sender_name: str) -> str:
+        """Get the assigned IP for a sender node by name."""
+        for node in self.canvas.topology_scene.network_model.nodes.values():
+            if node.name == sender_name:
+                for port in node.ports:
+                    if port.assigned_ip:
+                        return port.assigned_ip
+        return ""
     
     def _on_simulation_progress(self, progress: int):
         """Handle simulation progress update."""
@@ -1097,6 +1289,7 @@ class MainWindow(QMainWindow):
         current_time = (progress / 100.0) * self.sim_config.duration
         self.simulation_state.current_time = current_time
         self.stats_panel.set_progress(current_time, self.sim_config.duration)
+        self.toolbar.update_simulation_time(current_time, self.sim_config.duration)
     
     def _show_ns3_config_dialog(self):
         """Show dialog to configure ns-3 path."""

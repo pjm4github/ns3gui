@@ -220,6 +220,9 @@ class PortConfig:
     ip_address: str = ""
     netmask: str = "255.255.255.0"
     
+    # Simulation-assigned IP (populated after simulation runs)
+    assigned_ip: str = ""  # IP assigned by ns-3 simulation
+    
     # Link binding
     connected_link_id: Optional[str] = None
     

@@ -363,7 +363,7 @@ class PortEditor(QFrame):
         l3_label.setStyleSheet("font-weight: 600; color: #6B7280; font-size: 10px;")
         layout.addRow(l3_label)
         
-        # IP Address
+        # IP Address (user-configured)
         self._ip_edit = QLineEdit(self.port.ip_address)
         self._ip_edit.setPlaceholderText("e.g., 10.0.1.1")
         self._ip_edit.textChanged.connect(self._on_ip_changed)
@@ -376,6 +376,49 @@ class PortEditor(QFrame):
         self._netmask_edit.setStyleSheet(input_style())
         layout.addRow("Netmask:", self._netmask_edit)
         
+        # Assigned IP (from simulation) - read-only with special styling
+        assigned_ip_container = QWidget()
+        assigned_ip_layout = QHBoxLayout(assigned_ip_container)
+        assigned_ip_layout.setContentsMargins(0, 0, 0, 0)
+        assigned_ip_layout.setSpacing(4)
+        
+        self._assigned_ip_label = QLabel(self.port.assigned_ip or "—")
+        self._assigned_ip_label.setStyleSheet("""
+            QLabel {
+                font-family: 'Consolas', 'Monaco', monospace;
+                color: #059669;
+                font-weight: 500;
+                padding: 4px 8px;
+                background: #D1FAE5;
+                border: 1px solid #A7F3D0;
+                border-radius: 4px;
+            }
+        """)
+        assigned_ip_layout.addWidget(self._assigned_ip_label)
+        
+        # Runtime badge
+        runtime_badge = QLabel("runtime")
+        runtime_badge.setStyleSheet("""
+            QLabel {
+                font-size: 9px;
+                color: #6B7280;
+                background: #F3F4F6;
+                padding: 2px 4px;
+                border-radius: 3px;
+            }
+        """)
+        runtime_badge.setToolTip("This IP was assigned during simulation")
+        assigned_ip_layout.addWidget(runtime_badge)
+        assigned_ip_layout.addStretch()
+        
+        # Create row label with info icon
+        assigned_label = QLabel("Assigned IP:")
+        assigned_label.setToolTip("IP address assigned by ns-3 during simulation")
+        layout.addRow(assigned_label, assigned_ip_container)
+        
+        # Update visibility based on whether we have an assigned IP
+        self._update_assigned_ip_visibility()
+        
         # MAC (for non-switches)
         if self.node_type != NodeType.SWITCH:
             self._mac_edit = QLineEdit(self.port.mac_address)
@@ -385,6 +428,35 @@ class PortEditor(QFrame):
             layout.addRow("MAC:", self._mac_edit)
         
         return group
+    
+    def _update_assigned_ip_visibility(self):
+        """Update the assigned IP display based on current value."""
+        if hasattr(self, '_assigned_ip_label'):
+            if self.port.assigned_ip:
+                self._assigned_ip_label.setText(self.port.assigned_ip)
+                self._assigned_ip_label.setStyleSheet("""
+                    QLabel {
+                        font-family: 'Consolas', 'Monaco', monospace;
+                        color: #059669;
+                        font-weight: 500;
+                        padding: 4px 8px;
+                        background: #D1FAE5;
+                        border: 1px solid #A7F3D0;
+                        border-radius: 4px;
+                    }
+                """)
+            else:
+                self._assigned_ip_label.setText("—")
+                self._assigned_ip_label.setStyleSheet("""
+                    QLabel {
+                        font-family: 'Consolas', 'Monaco', monospace;
+                        color: #9CA3AF;
+                        padding: 4px 8px;
+                        background: #F9FAFB;
+                        border: 1px solid #E5E7EB;
+                        border-radius: 4px;
+                    }
+                """)
     
     def _toggle_expand(self):
         self._is_expanded = not self._is_expanded
@@ -398,10 +470,32 @@ class PortEditor(QFrame):
         self._status_dot.setToolTip(status.title())
     
     def _update_ip_preview(self):
-        if self.port.ip_address:
+        """Update the IP preview shown in the collapsed header."""
+        # Prefer assigned IP (from simulation), fall back to configured IP
+        if self.port.assigned_ip:
+            self._ip_preview.setText(f"⚡ {self.port.assigned_ip}")
+            self._ip_preview.setStyleSheet("""
+                color: #059669; 
+                font-family: monospace; 
+                font-size: 11px;
+                font-weight: 500;
+            """)
+            self._ip_preview.setToolTip("Runtime-assigned IP from simulation")
+        elif self.port.ip_address:
             self._ip_preview.setText(self.port.ip_address)
+            self._ip_preview.setStyleSheet("color: #6B7280; font-family: monospace; font-size: 11px;")
+            self._ip_preview.setToolTip("Configured IP address")
         else:
             self._ip_preview.setText("")
+            self._ip_preview.setToolTip("")
+    
+    def refresh_from_model(self):
+        """Refresh display from the port model (call after external changes)."""
+        self._update_status_indicator()
+        self._update_ip_preview()
+        self._update_assigned_ip_visibility()
+        # Update the name label
+        self._name_label.setText(self.port.display_name)
     
     # Signal handlers
     def _on_name_changed(self, text):
@@ -959,6 +1053,15 @@ class NodePropertiesWidget(QWidget):
             editor.changed.connect(self.propertiesChanged)
             self._ports_container.addWidget(editor)
     
+    def refresh_port_displays(self):
+        """Refresh all port editors to show updated assigned IPs."""
+        for i in range(self._ports_container.count()):
+            item = self._ports_container.itemAt(i)
+            if item and item.widget():
+                editor = item.widget()
+                if isinstance(editor, PortEditor):
+                    editor.refresh_from_model()
+    
     def _update_type_specific_ui(self):
         if not self._node:
             return
@@ -1493,3 +1596,8 @@ class PropertyPanel(QWidget):
             self._node_props._update_display()
         elif self._link_props.isVisible():
             self._link_props._update_display()
+    
+    def refresh_port_displays(self):
+        """Refresh port editors to show updated assigned IPs without full rebuild."""
+        if self._node_props.isVisible():
+            self._node_props.refresh_port_displays()

@@ -7,6 +7,7 @@ on each node that can be selected and connected.
 """
 
 import math
+import logging
 from typing import Optional, List
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QLineF, QTimer, QObject
 from PyQt6.QtGui import (
@@ -20,6 +21,9 @@ from PyQt6.QtWidgets import (
 )
 
 from models import NodeType, MediumType, ChannelType, PortType, Position, NetworkModel, NodeModel, LinkModel, PortConfig
+
+# Setup logger for this module
+logger = logging.getLogger(__name__)
 
 
 # Color scheme
@@ -61,6 +65,7 @@ class PortGraphicsItem(QGraphicsEllipseItem):
     
     Shows port type abbreviation (E, FE, 1G, 10G, S, FO, W) inside the port.
     Can be clicked to select the port or dragged to create a link.
+    Displays assigned IP address as a small label next to the port.
     """
     
     PORT_RADIUS = 10  # Larger to fit text
@@ -100,6 +105,11 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         self._label = QGraphicsTextItem(self)
         self._update_label()
         
+        # Create IP address label (positioned outside port)
+        self._ip_label = QGraphicsTextItem(self)
+        self._ip_label.setVisible(False)
+        self._update_ip_label()
+        
         # Enable interactions
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -121,6 +131,52 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         # Center the label
         label_rect = self._label.boundingRect()
         self._label.setPos(-label_rect.width() / 2, -label_rect.height() / 2)
+    
+    def _update_ip_label(self):
+        """Update the IP address label."""
+        # Get IP to display (prefer assigned_ip from simulation, fall back to configured)
+        ip = self.port.assigned_ip or self.port.ip_address
+        
+        if ip:
+            self._ip_label.setPlainText(ip)
+            self._ip_label.setVisible(True)
+            
+            # Style - small monospace font
+            font = QFont("Consolas", 7)
+            self._ip_label.setFont(font)
+            self._ip_label.setDefaultTextColor(QColor("#1F2937"))  # Dark gray
+            
+            # Position label outside the port, away from node center
+            label_rect = self._ip_label.boundingRect()
+            
+            # Calculate offset direction (away from node center)
+            offset_distance = self.PORT_RADIUS + 3
+            offset_x = math.cos(self._angle) * offset_distance
+            offset_y = math.sin(self._angle) * offset_distance
+            
+            # Adjust position based on angle to avoid overlap
+            if abs(math.cos(self._angle)) > 0.7:  # More horizontal
+                if math.cos(self._angle) > 0:  # Right side
+                    self._ip_label.setPos(offset_x, -label_rect.height() / 2)
+                else:  # Left side
+                    self._ip_label.setPos(offset_x - label_rect.width(), -label_rect.height() / 2)
+            else:  # More vertical
+                if math.sin(self._angle) > 0:  # Bottom
+                    self._ip_label.setPos(-label_rect.width() / 2, offset_y)
+                else:  # Top
+                    self._ip_label.setPos(-label_rect.width() / 2, offset_y - label_rect.height())
+        else:
+            self._ip_label.setVisible(False)
+    
+    def set_assigned_ip(self, ip: str):
+        """Set the assigned IP address and update display."""
+        self.port.assigned_ip = ip
+        self._update_ip_label()
+    
+    def clear_assigned_ip(self):
+        """Clear the assigned IP address."""
+        self.port.assigned_ip = ""
+        self._update_ip_label()
     
     def _update_appearance(self):
         """Update color based on port state."""
@@ -151,6 +207,7 @@ class PortGraphicsItem(QGraphicsEllipseItem):
     def update_from_model(self):
         """Update appearance from the port model (call after port type changes)."""
         self._update_label()
+        self._update_ip_label()
         self._update_appearance()
     
     def set_selected(self, selected: bool):
@@ -594,6 +651,70 @@ class LinkGraphicsItem(QGraphicsPathItem):
         self._is_default_route = is_default
         self._setup_appearance()
         self.update()
+    
+    def set_activity(self, active: bool, direction: str = 'both'):
+        """
+        Set link activity state for visual feedback during simulation.
+        
+        Args:
+            active: Whether the link is currently active
+            direction: 'forward', 'reverse', or 'both'
+        """
+        if not hasattr(self, '_activity_state'):
+            self._activity_state = False
+            self._activity_timer = None
+        
+        self._activity_state = active
+        
+        if active:
+            # Highlight link with activity color
+            activity_color = QColor("#F59E0B")  # Orange for activity
+            pen = QPen(activity_color, 6, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            self.setPen(pen)
+            # Keep z-order at -1 (behind nodes) - don't bring to front
+        else:
+            # Restore normal appearance
+            self._setup_appearance()
+        
+        self.update()
+    
+    def flash_activity(self, duration_ms: int = 1500):
+        """
+        Flash the link to indicate activity - retriggerable one-shot.
+        
+        Each call resets the timer, so rapid packets keep the link highlighted.
+        The link stays highlighted for duration_ms after the LAST packet.
+        
+        Args:
+            duration_ms: Duration to stay highlighted after last trigger (default 1.5s)
+        """
+        from PyQt6.QtCore import QTimer
+        
+        # Initialize timer if needed
+        if not hasattr(self, '_flash_timer'):
+            self._flash_timer = None
+        
+        # Set active state (highlight the link)
+        self.set_activity(True)
+        
+        # Stop existing timer if running (retriggerable behavior)
+        if self._flash_timer is not None:
+            self._flash_timer.stop()
+            self._flash_timer.deleteLater()
+        
+        # Create new timer - this resets the countdown
+        self._flash_timer = QTimer()
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._on_flash_timeout)
+        self._flash_timer.start(duration_ms)
+    
+    def _on_flash_timeout(self):
+        """Handle flash timer expiration."""
+        self.set_activity(False)
+        if hasattr(self, '_flash_timer') and self._flash_timer:
+            self._flash_timer.deleteLater()
+            self._flash_timer = None
     
     def _update_path(self):
         """Update the path between source and target ports."""
@@ -1040,6 +1161,238 @@ class TopologyScene(QGraphicsScene):
     def get_link_item(self, link_id: str) -> Optional[LinkGraphicsItem]:
         """Get link graphics item by ID."""
         return self._link_items.get(link_id)
+    
+    def flash_link_by_nodes(self, source_name: str, target_name: str, duration_ms: int = 300):
+        """
+        Flash link(s) between two nodes by their names.
+        
+        Args:
+            source_name: Name of source node
+            target_name: Name of target node
+            duration_ms: Duration of flash in milliseconds
+        """
+        # Find nodes by name
+        source_node_id = None
+        target_node_id = None
+        
+        for node_id, node in self.network_model.nodes.items():
+            if node.name == source_name:
+                source_node_id = node_id
+            elif node.name == target_name:
+                target_node_id = node_id
+        
+        if not source_node_id or not target_node_id:
+            return
+        
+        # Find and flash link(s) between these nodes
+        for link_id, link_item in self._link_items.items():
+            link = link_item.link_model
+            if ((link.source_node_id == source_node_id and link.target_node_id == target_node_id) or
+                (link.source_node_id == target_node_id and link.target_node_id == source_node_id)):
+                link_item.flash_activity(duration_ms)
+    
+    def flash_links_for_node(self, node_name: str, duration_ms: int = 300):
+        """
+        Flash all links connected to a node by name.
+        
+        Args:
+            node_name: Name of the node
+            duration_ms: Duration of flash in milliseconds
+        """
+        # Find node by name
+        node_id = None
+        for nid, node in self.network_model.nodes.items():
+            if node.name == node_name:
+                node_id = nid
+                break
+        
+        if not node_id:
+            return
+        
+        # Flash all links connected to this node
+        for link_id, link_item in self._link_items.items():
+            link = link_item.link_model
+            if link.source_node_id == node_id or link.target_node_id == node_id:
+                link_item.flash_activity(duration_ms)
+    
+    def _get_links_for_path(self, path: list) -> list:
+        """
+        Get all link items along a path of nodes.
+        
+        Args:
+            path: List of node IDs forming the path
+            
+        Returns:
+            List of LinkGraphicsItem objects along the path
+        """
+        if len(path) < 2:
+            return []
+        
+        links = []
+        for i in range(len(path) - 1):
+            node_a = path[i]
+            node_b = path[i + 1]
+            
+            # Find link between these two nodes
+            for link_id, link_item in self._link_items.items():
+                link = link_item.link_model
+                if ((link.source_node_id == node_a and link.target_node_id == node_b) or
+                    (link.source_node_id == node_b and link.target_node_id == node_a)):
+                    links.append(link_item)
+                    break
+        
+        return links
+    
+    def flash_path(self, source_name: str, target_name: str, duration_ms: int = 1500):
+        """
+        Flash all links along the path from source to target node.
+        
+        This traces the full route through any intermediate nodes (switches, routers)
+        and highlights all links simultaneously.
+        
+        Args:
+            source_name: Name of source node
+            target_name: Name of target node  
+            duration_ms: Duration of flash in milliseconds (retriggerable)
+        """
+        logger.debug(f"flash_path called: source='{source_name}', target='{target_name}'")
+        
+        # Find node IDs by name
+        source_id = None
+        target_id = None
+        
+        for node_id, node in self.network_model.nodes.items():
+            if node.name == source_name:
+                source_id = node_id
+                logger.debug(f"Found source node: {source_id}")
+            if node.name == target_name:
+                target_id = node_id
+                logger.debug(f"Found target node: {target_id}")
+        
+        if not source_id or not target_id:
+            logger.debug(f"Missing source or target, falling back to flash_links_for_node")
+            self.flash_links_for_node(source_name, duration_ms)
+            return
+        
+        # Find path between nodes using BFS
+        if source_id == target_id:
+            path = [source_id]
+            logger.debug(f"Source equals target, path: {path}")
+        else:
+            # Build adjacency list from links
+            adjacency = {}
+            for nid in self.network_model.nodes:
+                adjacency[nid] = []
+            
+            for link in self.network_model.links.values():
+                if link.source_node_id in adjacency:
+                    adjacency[link.source_node_id].append(link.target_node_id)
+                if link.target_node_id in adjacency:
+                    adjacency[link.target_node_id].append(link.source_node_id)
+            
+            logger.debug(f"Adjacency list: {adjacency}")
+            
+            # BFS to find shortest path
+            from collections import deque
+            queue = deque([(source_id, [source_id])])
+            visited = {source_id}
+            path = []
+            
+            while queue:
+                current, current_path = queue.popleft()
+                logger.debug(f"BFS visiting: {current}, path: {current_path}")
+                
+                for neighbor in adjacency.get(current, []):
+                    if neighbor == target_id:
+                        path = current_path + [neighbor]
+                        logger.debug(f"Found path: {path}")
+                        break
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, current_path + [neighbor]))
+                
+                if path:
+                    break
+        
+        if not path:
+            logger.debug(f"No path found, falling back to flash_links_for_node")
+            self.flash_links_for_node(source_name, duration_ms)
+            return
+        
+        # Get all links along the path and flash them
+        links = self._get_links_for_path(path)
+        logger.debug(f"Got {len(links)} links to flash for path {path}")
+        
+        if links:
+            for link_item in links:
+                link_item.flash_activity(duration_ms)
+        else:
+            logger.debug(f"No links found for path, falling back to flash_links_for_node")
+            self.flash_links_for_node(source_name, duration_ms)
+    
+    def flash_path_by_ip(self, source_ip: str, target_ip: str, duration_ms: int = 1500):
+        """
+        Flash all links along the path from source IP to target IP.
+        
+        Looks up nodes by their assigned IP addresses.
+        
+        Args:
+            source_ip: Source IP address (e.g., "10.1.1.1")
+            target_ip: Target IP address (e.g., "10.1.1.2")
+            duration_ms: Duration of flash in milliseconds
+        """
+        # Find nodes by assigned IP
+        source_name = None
+        target_name = None
+        
+        for node in self.network_model.nodes.values():
+            for port in node.ports:
+                if port.assigned_ip == source_ip:
+                    source_name = node.name
+                elif port.assigned_ip == target_ip:
+                    target_name = node.name
+        
+        if source_name and target_name:
+            self.flash_path(source_name, target_name, duration_ms)
+    
+    def clear_all_link_activity(self):
+        """Reset all links to normal appearance."""
+        for link_item in self._link_items.values():
+            link_item.set_activity(False)
+    
+    def set_node_ip(self, node_name: str, ip_address: str):
+        """
+        Set the assigned IP address for a node's connected port.
+        
+        Args:
+            node_name: Name of the node
+            ip_address: IP address to assign (e.g., "10.1.1.1")
+        """
+        # Find node by name
+        for node_id, node in self.network_model.nodes.items():
+            if node.name == node_name:
+                node_item = self._node_items.get(node_id)
+                if node_item:
+                    # Set IP on the first connected port
+                    for port in node.ports:
+                        if port.is_connected:
+                            port.assigned_ip = ip_address
+                            # Update the graphics
+                            port_item = node_item.get_port_item(port.id)
+                            if port_item:
+                                port_item.set_assigned_ip(ip_address)
+                            break
+                return
+    
+    def clear_all_assigned_ips(self):
+        """Clear all assigned IP addresses from all nodes."""
+        for node_id, node in self.network_model.nodes.items():
+            for port in node.ports:
+                port.assigned_ip = ""
+            node_item = self._node_items.get(node_id)
+            if node_item:
+                for port_item in node_item._port_items.values():
+                    port_item.clear_assigned_ip()
     
     def update_links_for_node(self, node_id: str):
         """Update all links connected to a node."""
