@@ -65,10 +65,12 @@ class PortGraphicsItem(QGraphicsEllipseItem):
     
     Shows port type abbreviation (E, FE, 1G, 10G, S, FO, W) inside the port.
     Can be clicked to select the port or dragged to create a link.
+    When parent node is selected, port can be dragged around the node perimeter.
     Displays assigned IP address as a small label next to the port.
     """
     
     PORT_RADIUS = 10  # Larger to fit text
+    MIN_PORT_SPACING = 0.3  # Minimum angle between ports in radians (~17 degrees)
     
     # Port type to label mapping
     PORT_TYPE_LABELS = {
@@ -100,6 +102,8 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         self.parent_node = parent
         self._is_hovered = False
         self._is_selected = False
+        self._is_dragging = False
+        self._drag_start_angle = 0.0
         
         # Create label for port type
         self._label = QGraphicsTextItem(self)
@@ -116,6 +120,22 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         self.setZValue(10)  # Above node
         
         self._update_appearance()
+    
+    def _update_position_from_angle(self):
+        """Update port position based on current angle."""
+        x = math.cos(self._angle) * self._node_radius
+        y = math.sin(self._angle) * self._node_radius
+        self.setPos(x, y)
+        self._update_ip_label()
+    
+    def get_angle(self) -> float:
+        """Get the current angle of the port on the node perimeter."""
+        return self._angle
+    
+    def set_angle(self, angle: float):
+        """Set the port angle and update position."""
+        self._angle = angle
+        self._update_position_from_angle()
     
     def _update_label(self):
         """Update the port type label text."""
@@ -223,7 +243,12 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         """Handle hover enter."""
         self._is_hovered = True
         self._update_appearance()
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Show drag cursor if parent node is selected, otherwise pointing hand
+        if self._is_parent_node_selected():
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         
         # Show tooltip with port info
         port_type_name = self.port.port_type.name.replace('_', ' ').title()
@@ -232,6 +257,8 @@ class PortGraphicsItem(QGraphicsEllipseItem):
             tooltip += f"\n{self.port.ip_address}"
         if self.port.is_connected:
             tooltip += "\n(connected)"
+        if self._is_parent_node_selected():
+            tooltip += "\n(drag to reposition)"
         QToolTip.showText(event.screenPos(), tooltip)
         
         super().hoverEnterEvent(event)
@@ -244,23 +271,108 @@ class PortGraphicsItem(QGraphicsEllipseItem):
         QToolTip.hideText()
         super().hoverLeaveEvent(event)
     
+    def _is_parent_node_selected(self) -> bool:
+        """Check if the parent node is currently selected."""
+        return self.parent_node.isSelected()
+    
+    def _get_other_port_angles(self) -> List[float]:
+        """Get angles of all other ports on the same node."""
+        angles = []
+        for port_id, port_item in self.parent_node._port_items.items():
+            if port_item != self:
+                angles.append(port_item.get_angle())
+        return angles
+    
+    def _normalize_angle(self, angle: float) -> float:
+        """Normalize angle to [-π, π] range."""
+        while angle > math.pi:
+            angle -= 2 * math.pi
+        while angle < -math.pi:
+            angle += 2 * math.pi
+        return angle
+    
+    def _angle_distance(self, a1: float, a2: float) -> float:
+        """Get the shortest angular distance between two angles."""
+        diff = self._normalize_angle(a2 - a1)
+        return abs(diff)
+    
+    def _would_collide(self, new_angle: float) -> bool:
+        """Check if moving to new_angle would collide with another port."""
+        other_angles = self._get_other_port_angles()
+        for other_angle in other_angles:
+            if self._angle_distance(new_angle, other_angle) < self.MIN_PORT_SPACING:
+                return True
+        return False
+    
     def mousePressEvent(self, event):
-        """Handle mouse press - select port on left click, start link on right click."""
+        """Handle mouse press - drag port if node selected, else select/link."""
+        # Check if parent node is selected BEFORE this event might change it
+        parent_is_selected = self._is_parent_node_selected()
+        
         if event.button() == Qt.MouseButton.LeftButton:
-            # Notify scene of port selection
-            scene = self.scene()
-            if scene and isinstance(scene, TopologyScene):
-                scene.on_port_clicked(self)
-            event.accept()
+            if parent_is_selected:
+                # Start dragging the port around the perimeter
+                self._is_dragging = True
+                self._drag_start_angle = self._angle
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                # Don't propagate to parent - we're handling the drag
+                event.accept()
+                return
+            else:
+                # Notify scene of port selection
+                scene = self.scene()
+                if scene and isinstance(scene, TopologyScene):
+                    scene.on_port_clicked(self)
+                event.accept()
+                return
         elif event.button() == Qt.MouseButton.RightButton:
-            # Start link creation from this port
-            scene = self.scene()
-            if scene and isinstance(scene, TopologyScene):
-                if not self.port.is_connected:
+            # Start link creation from this port ONLY when node is NOT selected
+            if not parent_is_selected:
+                scene = self.scene()
+                if scene and isinstance(scene, TopologyScene):
                     scene.start_link_from_port(self)
+                event.accept()
+                return
+            else:
+                # Node is selected - ignore right click (or could show context menu)
+                event.accept()
+                return
+        
+        event.ignore()
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move - drag port around node perimeter."""
+        if self._is_dragging:
+            # Get mouse position relative to parent node center
+            pos_in_parent = event.pos() + self.pos()  # Convert to parent coords
+            
+            # Calculate angle from node center to mouse position
+            new_angle = math.atan2(pos_in_parent.y(), pos_in_parent.x())
+            
+            # Check for collision with other ports
+            if not self._would_collide(new_angle):
+                self._angle = new_angle
+                # Save angle to model for persistence
+                self.port.angle = new_angle
+                self._update_position_from_angle()
+                
+                # Update connected links
+                scene = self.scene()
+                if scene and isinstance(scene, TopologyScene):
+                    scene.update_links_for_node(self.parent_node.node_model.id)
+            
             event.accept()
         else:
-            event.ignore()
+            super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release - end port dragging."""
+        if event.button() == Qt.MouseButton.LeftButton and self._is_dragging:
+            self._is_dragging = False
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
 
 
@@ -407,16 +519,22 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         if num_ports == 0:
             return
         
-        # Distribute ports evenly around the node
+        # Distribute ports evenly around the node (default)
         # Start from right side (-π/2) and go clockwise
         start_angle = -math.pi / 2
         
         for i, port in enumerate(self.node_model.ports):
-            if num_ports == 1:
+            # Use saved angle if available, otherwise distribute evenly
+            if port.angle is not None:
+                angle = port.angle
+            elif num_ports == 1:
                 angle = 0  # Single port on right
             else:
                 # Distribute evenly
                 angle = start_angle + (2 * math.pi * i / num_ports)
+            
+            # Always save the angle to the model so it persists
+            port.angle = angle
             
             port_item = PortGraphicsItem(port, angle, self.NODE_RADIUS, self)
             self._port_items[port.id] = port_item
@@ -593,12 +711,223 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         super().paint(painter, option, widget)
 
 
+
+
+# ----------------------------
+# Geometry helpers for Bezier curves
+# ----------------------------
+
+def _vec_len(v: QPointF) -> float:
+    """Get length of a vector."""
+    return math.hypot(v.x(), v.y())
+
+def _vec_norm(v: QPointF) -> QPointF:
+    """Normalize a vector to unit length."""
+    L = _vec_len(v)
+    if L == 0:
+        return QPointF(0, 0)
+    return QPointF(v.x() / L, v.y() / L)
+
+def _snap_angle(v: QPointF, step_degrees: float = 45.0) -> QPointF:
+    """Snap vector direction to nearest step_degrees, preserving magnitude."""
+    L = _vec_len(v)
+    if L == 0:
+        return v
+    ang = math.degrees(math.atan2(v.y(), v.x()))
+    snapped = round(ang / step_degrees) * step_degrees
+    rad = math.radians(snapped)
+    return QPointF(math.cos(rad) * L, math.sin(rad) * L)
+
+
+# ----------------------------
+# Anchor data model
+# ----------------------------
+
+class Anchor:
+    """
+    An anchor point on a Bezier curve with tangent handles.
+    
+    If smooth=True, tin and tout are kept colinear (mirrored).
+    If smooth=False (broken), they're independent.
+    """
+    def __init__(self, p: QPointF, smooth: bool = True):
+        self.p = QPointF(p)  # Position on curve
+        self.smooth = smooth
+        self.tin = QPointF(0, 0)   # Incoming tangent vector (from anchor)
+        self.tout = QPointF(0, 0)  # Outgoing tangent vector (from anchor)
+    
+    def set_shared_tangent(self, t: QPointF):
+        """Set both tangents to the same value (for smooth points)."""
+        self.tin = QPointF(t)
+        self.tout = QPointF(t)
+
+
+# ----------------------------
+# Knob base class
+# ----------------------------
+
+class _BaseKnob(QGraphicsEllipseItem):
+    """Base class for draggable knobs."""
+    
+    def __init__(self, radius: float = 6.0, parent=None):
+        super().__init__(-radius, -radius, radius * 2, radius * 2, parent)
+        self.r = radius
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges |
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
+        self.setZValue(100)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        
+        # Default appearance
+        self.setPen(QPen(QColor("#1F2937"), 1))
+        self.setBrush(QBrush(QColor("white")))
+    
+    def hoverEnterEvent(self, event):
+        self.setBrush(QBrush(QColor("#DBEAFE")))  # Light blue
+        super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        self.setBrush(QBrush(QColor("white")))
+        super().hoverLeaveEvent(event)
+
+
+class AnchorKnob(_BaseKnob):
+    """
+    Draggable anchor point that lies on the curve.
+    Displayed as a square.
+    """
+    
+    def __init__(self, link_item: 'LinkGraphicsItem', index: int, radius: float = 7.0):
+        super().__init__(radius=radius)
+        self.link_item = link_item
+        self.index = index
+        self.setZValue(110)  # Above handle knobs
+        
+        # Square appearance
+        self.setPen(QPen(QColor("#1F2937"), 2))
+        self.setBrush(QBrush(QColor("white")))
+    
+    def paint(self, painter, option, widget=None):
+        """Draw as a square instead of ellipse."""
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawRect(self.boundingRect())
+    
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            if not self.link_item._guard_setpos:
+                # Update anchor position in model
+                self.link_item._anchors[self.index].p = self.pos()
+                self.link_item._sync_handle_items(self.index)
+                self.link_item._rebuild_path()
+        return super().itemChange(change, value)
+
+
+class HandleKnob(_BaseKnob):
+    """
+    Draggable tangent handle for an anchor.
+    
+    side: 'in' for incoming tangent, 'out' for outgoing tangent
+    """
+    
+    def __init__(self, link_item: 'LinkGraphicsItem', index: int, side: str, radius: float = 5.0):
+        super().__init__(radius=radius)
+        self.link_item = link_item
+        self.index = index
+        self.side = side  # 'in' or 'out'
+        self.setZValue(105)
+        
+        # Circle appearance (different color for in/out)
+        if side == 'in':
+            self.setBrush(QBrush(QColor("#BFDBFE")))  # Light blue
+        else:
+            self.setBrush(QBrush(QColor("#FED7AA")))  # Light orange
+    
+    def hoverEnterEvent(self, event):
+        if self.side == 'in':
+            self.setBrush(QBrush(QColor("#93C5FD")))  # Brighter blue
+        else:
+            self.setBrush(QBrush(QColor("#FDBA74")))  # Brighter orange
+        super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        if self.side == 'in':
+            self.setBrush(QBrush(QColor("#BFDBFE")))
+        else:
+            self.setBrush(QBrush(QColor("#FED7AA")))
+        super().hoverLeaveEvent(event)
+    
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            if not self.link_item._guard_setpos:
+                anchor = self.link_item._anchors[self.index]
+                v = self.pos() - anchor.p
+                
+                # Get keyboard modifiers
+                mods = QApplication.keyboardModifiers()
+                
+                # Shift: angle constrain to 45 degree increments
+                if mods & Qt.KeyboardModifier.ShiftModifier:
+                    v = _snap_angle(v, 45.0)
+                    # Snap knob position visually
+                    self.link_item._guard_setpos = True
+                    self.setPos(anchor.p + v)
+                    self.link_item._guard_setpos = False
+                
+                # Alt: break smoothness (independent in/out handles)
+                if mods & Qt.KeyboardModifier.AltModifier:
+                    anchor.smooth = False
+                
+                # Update tangent(s)
+                if self.side == "in":
+                    anchor.tin = v
+                    if anchor.smooth:
+                        # Mirror to keep colinear
+                        anchor.tout = QPointF(-v.x(), -v.y())
+                else:  # 'out'
+                    anchor.tout = v
+                    if anchor.smooth:
+                        anchor.tin = QPointF(-v.x(), -v.y())
+                
+                self.link_item._sync_handle_lines(self.index)
+                self.link_item._rebuild_path()
+        
+        return super().itemChange(change, value)
+
+
+# ----------------------------
+# Handle line (connects anchor to handle)
+# ----------------------------
+
+class HandleLine(QGraphicsPathItem):
+    """Dashed line from anchor to handle knob."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPen(QPen(QColor("#9CA3AF"), 1, Qt.PenStyle.DashLine))
+        self.setZValue(95)  # Below knobs
+
+
 class LinkGraphicsItem(QGraphicsPathItem):
     """
-    Visual representation of a network link between two ports.
+    Visual representation of a network link using piecewise cubic Bezier curves.
     
-    Draws a line from source port to target port.
+    Features:
+    - Anchors (squares) sit on the curve and can be dragged
+    - Handles (circles) control tangent direction and magnitude
+    - Smooth anchors keep tangents colinear (Illustrator-style)
+    - Alt+drag breaks an anchor into independent in/out handles
+    - Shift+drag constrains handle angle to 45 degree increments
+    - Curve enters/exits nodes perpendicular to node edge
     """
+    
+    # Multiplier for endpoint tangent length relative to node radius.
+    # The link will travel straight (radially) for this fraction of the node radius
+    # before the curve begins.
+    ENDPOINT_TANGENT_MULTIPLIER = 10.0
     
     def __init__(
         self, 
@@ -612,23 +941,38 @@ class LinkGraphicsItem(QGraphicsPathItem):
         self.source_item = source_item
         self.target_item = target_item
         
+        # Bezier curve data
+        self._anchors: List[Anchor] = []
+        self._num_intermediate = 0  # Number of user-added intermediate anchors
+        
+        # UI elements (created when shown)
+        self._anchor_knobs: List[AnchorKnob] = []
+        self._handle_in_knobs: List[HandleKnob] = []
+        self._handle_out_knobs: List[HandleKnob] = []
+        self._handle_in_lines: List[HandleLine] = []
+        self._handle_out_lines: List[HandleLine] = []
+        
+        self._guard_setpos = False  # Prevent recursion during snapping
+        self._show_handles = False
+        self._handles_created = False
+        
         # Enable selection
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
         
-        # State - must be initialized before _setup_appearance
+        # State
         self._is_hovered = False
         self._route_highlighted = False
         self._is_default_route = False
         
         # Visual setup
         self._setup_appearance()
-        self._update_path()
+        self._init_anchors()
+        self._rebuild_path()
     
     def _setup_appearance(self):
         """Set up colors and pen."""
         if self._route_highlighted:
-            # Route highlight appearance
             color = COLORS["route_default"] if self._is_default_route else COLORS["route_path"]
             self.setPen(QPen(color, 5, Qt.PenStyle.SolidLine, 
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
@@ -653,57 +997,33 @@ class LinkGraphicsItem(QGraphicsPathItem):
         self.update()
     
     def set_activity(self, active: bool, direction: str = 'both'):
-        """
-        Set link activity state for visual feedback during simulation.
-        
-        Args:
-            active: Whether the link is currently active
-            direction: 'forward', 'reverse', or 'both'
-        """
+        """Set link activity state for visual feedback during simulation."""
         if not hasattr(self, '_activity_state'):
             self._activity_state = False
-            self._activity_timer = None
         
         self._activity_state = active
         
         if active:
-            # Highlight link with activity color
-            activity_color = QColor("#F59E0B")  # Orange for activity
+            activity_color = QColor("#F59E0B")
             pen = QPen(activity_color, 6, Qt.PenStyle.SolidLine,
                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             self.setPen(pen)
-            # Keep z-order at -1 (behind nodes) - don't bring to front
         else:
-            # Restore normal appearance
             self._setup_appearance()
         
         self.update()
     
     def flash_activity(self, duration_ms: int = 1500):
-        """
-        Flash the link to indicate activity - retriggerable one-shot.
-        
-        Each call resets the timer, so rapid packets keep the link highlighted.
-        The link stays highlighted for duration_ms after the LAST packet.
-        
-        Args:
-            duration_ms: Duration to stay highlighted after last trigger (default 1.5s)
-        """
-        from PyQt6.QtCore import QTimer
-        
-        # Initialize timer if needed
+        """Flash the link to indicate activity - retriggerable one-shot."""
         if not hasattr(self, '_flash_timer'):
             self._flash_timer = None
         
-        # Set active state (highlight the link)
         self.set_activity(True)
         
-        # Stop existing timer if running (retriggerable behavior)
         if self._flash_timer is not None:
             self._flash_timer.stop()
             self._flash_timer.deleteLater()
         
-        # Create new timer - this resets the countdown
         self._flash_timer = QTimer()
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._on_flash_timeout)
@@ -716,46 +1036,425 @@ class LinkGraphicsItem(QGraphicsPathItem):
             self._flash_timer.deleteLater()
             self._flash_timer = None
     
-    def _update_path(self):
-        """Update the path between source and target ports."""
-        # Get port positions if available
-        source_port_item = self.source_item.get_port_item(self.link_model.source_port_id)
-        target_port_item = self.target_item.get_port_item(self.link_model.target_port_id)
+    def _get_port_position(self, node_item: NodeGraphicsItem, port_id: str) -> QPointF:
+        """Get the scene position of a port on a node."""
+        port_item = node_item.get_port_item(port_id)
+        if port_item:
+            return port_item.get_scene_center()
+        # Fallback to node center if port not found
+        return node_item.scenePos()
+    
+    def _get_radial_direction(self, node_item: NodeGraphicsItem, port_pos: QPointF) -> QPointF:
+        """
+        Get the radial (outward) direction from node center through the port.
+        This ensures the link exits perpendicular to the node's edge.
+        """
+        node_center = node_item.scenePos()
+        direction = port_pos - node_center
+        return _vec_norm(direction)
+    
+    def _init_anchors(self):
+        """
+        Initialize anchor points by first computing a single cubic Bezier from
+        start to end, then subdividing it at t=0.5 to create a center control point.
         
-        if source_port_item and target_port_item:
-            start = source_port_item.get_scene_center()
-            end = target_port_item.get_scene_center()
-        else:
-            # Fallback to node centers
-            start = self.source_item.scenePos()
-            end = self.target_item.scenePos()
+        This ensures the center point lies exactly on the original curve and
+        the 3-anchor curve traces the same path as the original 2-anchor curve.
         
-        # Create curved path
+        Uses De Casteljau subdivision algorithm.
+        """
+        # Get port positions (attach to actual ports)
+        source_pos = self._get_port_position(self.source_item, self.link_model.source_port_id)
+        target_pos = self._get_port_position(self.target_item, self.link_model.target_port_id)
+        
+        # Get radial directions (perpendicular to node edge, pointing outward)
+        source_radial = self._get_radial_direction(self.source_item, source_pos)
+        target_radial = self._get_radial_direction(self.target_item, target_pos)
+        
+        # Tangent length based on class variable
+        node_radius = NodeGraphicsItem.NODE_RADIUS
+        endpoint_tangent_len = node_radius * self.ENDPOINT_TANGENT_MULTIPLIER
+        
+        # Step 1: Define the original single cubic Bezier (P0, C1, C2, P3)
+        P0 = source_pos
+        P3 = target_pos
+        
+        # Original endpoint tangent vectors
+        T0 = QPointF(source_radial.x() * endpoint_tangent_len, 
+                     source_radial.y() * endpoint_tangent_len)
+        T3 = QPointF(target_radial.x() * endpoint_tangent_len, 
+                     target_radial.y() * endpoint_tangent_len)
+        
+        # Bezier control points from Hermite tangents: C1 = P0 + T0/3, C2 = P3 + T3/3
+        # Note: T3 points outward from target, but for incoming we need it pointing toward P0
+        # So C2 = P3 + (incoming_tangent)/3 where incoming = -T3 direction but same length
+        C1 = P0 + T0 / 3.0
+        C2 = P3 + T3 / 3.0  # T3 is the incoming tangent (pointing outward = toward curve)
+        
+        # Step 2: Subdivide the cubic Bezier at t=0.5 using De Casteljau
+        # This gives us two cubic Beziers that together trace the exact same curve
+        
+        # Level 1 midpoints
+        P01 = (P0 + C1) / 2.0
+        P12 = (C1 + C2) / 2.0
+        P23 = (C2 + P3) / 2.0
+        
+        # Level 2 midpoints
+        P012 = (P01 + P12) / 2.0
+        P123 = (P12 + P23) / 2.0
+        
+        # Level 3 - the point on the curve at t=0.5
+        P0123 = (P012 + P123) / 2.0
+        
+        # The subdivision gives us:
+        # Left half:  P0, P01, P012, P0123
+        # Right half: P0123, P123, P23, P3
+        
+        # Step 3: Convert back to anchor + tangent representation
+        # For the piecewise Bezier with anchors at P0, P0123, P3:
+        # 
+        # Segment 1 (P0 to P0123): control points are P01 and P012
+        #   C1 = P0 + tout_start/3  =>  tout_start = 3*(P01 - P0)
+        #   C2 = P0123 + tin_center/3  =>  tin_center = 3*(P012 - P0123)
+        #
+        # Segment 2 (P0123 to P3): control points are P123 and P23
+        #   C1 = P0123 + tout_center/3  =>  tout_center = 3*(P123 - P0123)
+        #   C2 = P3 + tin_end/3  =>  tin_end = 3*(P23 - P3)
+        
+        # Start anchor
+        start_anchor = Anchor(P0, smooth=False)
+        start_anchor.tout = (P01 - P0) * 3.0
+        start_anchor.tin = QPointF(-start_anchor.tout.x(), -start_anchor.tout.y())
+        
+        # Center anchor - smooth so dragging one handle mirrors the other
+        center_anchor = Anchor(P0123, smooth=True)
+        center_anchor.tin = (P012 - P0123) * 3.0
+        center_anchor.tout = (P123 - P0123) * 3.0
+        
+        # End anchor
+        end_anchor = Anchor(P3, smooth=False)
+        end_anchor.tin = (P23 - P3) * 3.0
+        end_anchor.tout = QPointF(-end_anchor.tin.x(), -end_anchor.tin.y())
+        
+        # Build anchor list: start, center, end (always 3 anchors)
+        self._anchors = [start_anchor, center_anchor, end_anchor]
+    
+    def _rebuild_path(self):
+        """Rebuild the Bezier path from anchors."""
+        if len(self._anchors) < 2:
+            self.setPath(QPainterPath())
+            return
+        
         path = QPainterPath()
-        path.moveTo(start)
+        path.moveTo(self._anchors[0].p)
         
-        # Calculate control point for a subtle curve
-        mid = (start + end) / 2
-        dx = end.x() - start.x()
-        dy = end.y() - start.y()
-        
-        # Perpendicular offset for curve
-        length = math.sqrt(dx*dx + dy*dy)
-        if length > 0:
-            offset = min(length * 0.1, 30)
-            # Perpendicular direction
-            px = -dy / length * offset
-            py = dx / length * offset
-            control = QPointF(mid.x() + px, mid.y() + py)
-            path.quadTo(control, end)
-        else:
-            path.lineTo(end)
+        for i in range(len(self._anchors) - 1):
+            a0 = self._anchors[i]
+            a1 = self._anchors[i + 1]
+            
+            # Bezier control points from tangents
+            # C1 = P0 + tout/3, C2 = P1 + tin/3
+            c1 = a0.p + (a0.tout / 3.0)
+            c2 = a1.p + (a1.tin / 3.0)
+            
+            path.cubicTo(c1, c2, a1.p)
         
         self.setPath(path)
     
+    def _create_handle_items(self):
+        """Create all anchor and handle UI elements."""
+        if self._handles_created:
+            return
+        
+        scene = self.scene()
+        if not scene:
+            return
+        
+        num_anchors = len(self._anchors)
+        
+        for i, anchor in enumerate(self._anchors):
+            is_start = (i == 0)
+            is_end = (i == num_anchors - 1)
+            is_center = (not is_start and not is_end)
+            
+            # Anchor knob
+            ak = AnchorKnob(self, i)
+            ak.setPos(anchor.p)
+            scene.addItem(ak)
+            self._anchor_knobs.append(ak)
+            
+            # Handle knobs - each anchor type gets specific handles:
+            # Start anchor: only outgoing handle (tout)
+            # Center anchor: only outgoing handle (tout) - single tangent control
+            # End anchor: only incoming handle (tin)
+            hin = HandleKnob(self, i, "in")
+            hout = HandleKnob(self, i, "out")
+            hin.setPos(anchor.p + anchor.tin)
+            hout.setPos(anchor.p + anchor.tout)
+            scene.addItem(hin)
+            scene.addItem(hout)
+            self._handle_in_knobs.append(hin)
+            self._handle_out_knobs.append(hout)
+            
+            # Hide handles based on anchor type
+            if is_start or is_center:
+                hin.setVisible(False)  # Start and center don't show incoming handle
+            if is_end:
+                hout.setVisible(False)  # End doesn't show outgoing handle
+            
+            # Handle lines
+            lin = HandleLine()
+            lout = HandleLine()
+            scene.addItem(lin)
+            scene.addItem(lout)
+            self._handle_in_lines.append(lin)
+            self._handle_out_lines.append(lout)
+            
+            # Hide handle lines based on anchor type
+            if is_start or is_center:
+                lin.setVisible(False)
+            if is_end:
+                lout.setVisible(False)
+            
+            self._sync_handle_lines(i)
+        
+        self._handles_created = True
+    
+    def _remove_handle_items(self):
+        """Remove all anchor and handle UI elements."""
+        scene = self.scene()
+        if not scene:
+            return
+        
+        for item in self._anchor_knobs + self._handle_in_knobs + self._handle_out_knobs + \
+                    self._handle_in_lines + self._handle_out_lines:
+            try:
+                scene.removeItem(item)
+            except:
+                pass
+        
+        self._anchor_knobs.clear()
+        self._handle_in_knobs.clear()
+        self._handle_out_knobs.clear()
+        self._handle_in_lines.clear()
+        self._handle_out_lines.clear()
+        self._handles_created = False
+    
+    def _sync_handle_items(self, i: int):
+        """Update handle knob positions when anchor moves."""
+        if not self._handles_created or i >= len(self._anchors):
+            return
+        
+        anchor = self._anchors[i]
+        
+        if not self._guard_setpos:
+            self._guard_setpos = True
+            self._handle_in_knobs[i].setPos(anchor.p + anchor.tin)
+            self._handle_out_knobs[i].setPos(anchor.p + anchor.tout)
+            self._guard_setpos = False
+        
+        self._sync_handle_lines(i)
+    
+    def _sync_handle_lines(self, i: int):
+        """Update handle line geometry."""
+        if not self._handles_created or i >= len(self._anchors):
+            return
+        
+        anchor = self._anchors[i]
+        
+        # Incoming handle line
+        path_in = QPainterPath()
+        path_in.moveTo(anchor.p)
+        path_in.lineTo(anchor.p + anchor.tin)
+        self._handle_in_lines[i].setPath(path_in)
+        
+        # Outgoing handle line
+        path_out = QPainterPath()
+        path_out.moveTo(anchor.p)
+        path_out.lineTo(anchor.p + anchor.tout)
+        self._handle_out_lines[i].setPath(path_out)
+    
+    def _sync_all_items(self):
+        """Sync all handle items with anchor data."""
+        for i in range(len(self._anchors)):
+            if i < len(self._anchor_knobs):
+                self._anchor_knobs[i].setPos(self._anchors[i].p)
+            self._sync_handle_items(i)
+    
+    def _show_editing_handles(self, show: bool):
+        """Show or hide the editing handles."""
+        if show and not self._handles_created:
+            self._create_handle_items()
+        
+        self._show_handles = show
+        
+        if not self._handles_created:
+            return
+        
+        num_anchors = len(self._anchors)
+        
+        # Set visibility for all items, respecting anchor type rules
+        for i in range(len(self._anchor_knobs)):
+            is_start = (i == 0)
+            is_end = (i == num_anchors - 1)
+            is_center = (not is_start and not is_end)
+            
+            # Anchor knobs always visible when editing
+            self._anchor_knobs[i].setVisible(show)
+            
+            # Handle knobs - each anchor type gets specific handles:
+            # Start: only outgoing (tout)
+            # Center: only outgoing (tout) - single tangent control
+            # End: only incoming (tin)
+            if i < len(self._handle_in_knobs):
+                # Start and center don't show incoming handle
+                self._handle_in_knobs[i].setVisible(show and not is_start and not is_center)
+            if i < len(self._handle_out_knobs):
+                # End doesn't show outgoing handle
+                self._handle_out_knobs[i].setVisible(show and not is_end)
+            
+            # Handle lines follow same rules
+            if i < len(self._handle_in_lines):
+                self._handle_in_lines[i].setVisible(show and not is_start and not is_center)
+            if i < len(self._handle_out_lines):
+                self._handle_out_lines[i].setVisible(show and not is_end)
+    
+    def itemChange(self, change, value):
+        """Handle selection changes to show/hide control handles."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self._show_editing_handles(bool(value))
+        return super().itemChange(change, value)
+    
     def update_position(self):
-        """Update path when nodes move."""
-        self._update_path()
+        """
+        Update path when nodes move.
+        
+        Recalculates the entire curve using De Casteljau subdivision,
+        ensuring the center anchor stays on the natural curve path.
+        """
+        if len(self._anchors) < 2:
+            return
+        
+        # Get new port positions
+        source_pos = self._get_port_position(self.source_item, self.link_model.source_port_id)
+        target_pos = self._get_port_position(self.target_item, self.link_model.target_port_id)
+        
+        # Get radial directions (perpendicular to node edge, pointing outward)
+        source_radial = self._get_radial_direction(self.source_item, source_pos)
+        target_radial = self._get_radial_direction(self.target_item, target_pos)
+        
+        # Tangent length based on class variable
+        node_radius = NodeGraphicsItem.NODE_RADIUS
+        endpoint_tangent_len = node_radius * self.ENDPOINT_TANGENT_MULTIPLIER
+        
+        # Step 1: Define the original single cubic Bezier (P0, C1, C2, P3)
+        P0 = source_pos
+        P3 = target_pos
+        
+        # Original endpoint tangent vectors
+        T0 = QPointF(source_radial.x() * endpoint_tangent_len, 
+                     source_radial.y() * endpoint_tangent_len)
+        T3 = QPointF(target_radial.x() * endpoint_tangent_len, 
+                     target_radial.y() * endpoint_tangent_len)
+        
+        # Bezier control points from Hermite tangents
+        C1 = P0 + T0 / 3.0
+        C2 = P3 + T3 / 3.0
+        
+        # Step 2: Subdivide the cubic Bezier at t=0.5 using De Casteljau
+        # Level 1 midpoints
+        P01 = (P0 + C1) / 2.0
+        P12 = (C1 + C2) / 2.0
+        P23 = (C2 + P3) / 2.0
+        
+        # Level 2 midpoints
+        P012 = (P01 + P12) / 2.0
+        P123 = (P12 + P23) / 2.0
+        
+        # Level 3 - the point on the curve at t=0.5
+        P0123 = (P012 + P123) / 2.0
+        
+        # Step 3: Update anchors with subdivision results
+        # Start anchor
+        self._anchors[0].p = P0
+        self._anchors[0].tout = (P01 - P0) * 3.0
+        self._anchors[0].tin = QPointF(-self._anchors[0].tout.x(), -self._anchors[0].tout.y())
+        
+        # Center anchor (if exists)
+        if len(self._anchors) >= 3:
+            self._anchors[1].p = P0123
+            self._anchors[1].tin = (P012 - P0123) * 3.0
+            self._anchors[1].tout = (P123 - P0123) * 3.0
+        
+        # End anchor
+        self._anchors[-1].p = P3
+        self._anchors[-1].tin = (P23 - P3) * 3.0
+        self._anchors[-1].tout = QPointF(-self._anchors[-1].tin.x(), -self._anchors[-1].tin.y())
+        
+        self._rebuild_path()
+        self._sync_all_items()
+    
+    def add_intermediate_anchor(self, t: float = 0.5):
+        """
+        Add an intermediate anchor point on the curve.
+        
+        Args:
+            t: Parameter value (0-1) for where to add the anchor
+        """
+        if len(self._anchors) < 2:
+            return
+        
+        # Find which segment to split
+        num_segments = len(self._anchors) - 1
+        segment_t = t * num_segments
+        segment_idx = min(int(segment_t), num_segments - 1)
+        local_t = segment_t - segment_idx
+        
+        # Get the segment endpoints
+        a0 = self._anchors[segment_idx]
+        a1 = self._anchors[segment_idx + 1]
+        
+        # Calculate point on curve using De Casteljau
+        c1 = a0.p + (a0.tout / 3.0)
+        c2 = a1.p + (a1.tin / 3.0)
+        
+        # De Casteljau subdivision
+        p01 = a0.p + (c1 - a0.p) * local_t
+        p12 = c1 + (c2 - c1) * local_t
+        p23 = c2 + (a1.p - c2) * local_t
+        
+        p012 = p01 + (p12 - p01) * local_t
+        p123 = p12 + (p23 - p12) * local_t
+        
+        new_point = p012 + (p123 - p012) * local_t
+        
+        # Create new anchor with auto tangent
+        new_anchor = Anchor(new_point, smooth=True)
+        tangent_vec = _vec_norm(p123 - p012) * 30  # Default tangent length
+        new_anchor.tout = tangent_vec
+        new_anchor.tin = QPointF(-tangent_vec.x(), -tangent_vec.y())
+        
+        # Insert new anchor
+        self._anchors.insert(segment_idx + 1, new_anchor)
+        self._num_intermediate += 1
+        
+        # Recreate handles if visible
+        if self._show_handles:
+            self._remove_handle_items()
+            self._create_handle_items()
+        
+        self._rebuild_path()
+    
+    def reset_curve(self):
+        """Reset the curve to default (just endpoints)."""
+        self._remove_handle_items()
+        self._anchors.clear()
+        self._num_intermediate = 0
+        self._init_anchors()
+        self._rebuild_path()
+        
+        if self._show_handles:
+            self._create_handle_items()
     
     def hoverEnterEvent(self, event):
         """Handle hover enter."""
@@ -785,7 +1484,6 @@ class LinkGraphicsItem(QGraphicsPathItem):
             painter.drawPath(self.path())
         
         super().paint(painter, option, widget)
-
 
 class TempLinkItem(QGraphicsPathItem):
     """Temporary link shown while creating a new connection."""
@@ -1141,6 +1839,12 @@ class TopologyScene(QGraphicsScene):
         """Remove a link from the scene."""
         if link_id in self._link_items:
             link_item = self._link_items.pop(link_id)
+            
+            # Clean up handle items (anchor knobs, handle knobs, handle lines)
+            try:
+                link_item._remove_handle_items()
+            except (RuntimeError, AttributeError):
+                pass  # Items may already be deleted
             
             # Update port appearances - safely check if nodes still exist
             try:

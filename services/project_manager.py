@@ -260,7 +260,8 @@ class ProjectManager:
             "trunk_allowed_vlans": port.trunk_allowed_vlans,
             "ip_address": port.ip_address,
             "netmask": port.netmask,
-            "connected_link_id": port.connected_link_id
+            "connected_link_id": port.connected_link_id,
+            "angle": port.angle  # Port position on node perimeter (radians)
         }
     
     def _serialize_link(self, link: LinkModel, network: NetworkModel) -> dict:
@@ -505,7 +506,8 @@ class ProjectManager:
             trunk_allowed_vlans=data.get("trunk_allowed_vlans", "1-4094"),
             ip_address=data.get("ip_address", ""),
             netmask=data.get("netmask", "255.255.255.0"),
-            connected_link_id=data.get("connected_link_id")
+            connected_link_id=data.get("connected_link_id"),
+            angle=data.get("angle")  # Port position on node perimeter (radians)
         )
     
     def _deserialize_link(self, data: dict) -> LinkModel:

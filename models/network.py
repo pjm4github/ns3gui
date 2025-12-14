@@ -226,6 +226,9 @@ class PortConfig:
     # Link binding
     connected_link_id: Optional[str] = None
     
+    # Visual position - angle on node perimeter (radians, None = auto-distribute)
+    angle: Optional[float] = None
+    
     @property
     def is_connected(self) -> bool:
         """Check if port is connected to a link."""
@@ -761,7 +764,8 @@ class NetworkModel:
                             "vlan_mode": p.vlan_mode.name,
                             "ip_address": p.ip_address,
                             "netmask": p.netmask,
-                            "connected_link_id": p.connected_link_id
+                            "connected_link_id": p.connected_link_id,
+                            "angle": p.angle
                         }
                         for p in n.ports
                     ]
