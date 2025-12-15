@@ -32,11 +32,16 @@ Directory Structure:
 
 import json
 import shutil
+import os
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from models.network import NetworkModel
+    from models.simulation import SimulationConfig
 
 
 class ProjectState(Enum):
@@ -47,23 +52,6 @@ class ProjectState(Enum):
     SIMULATION_READY = "ready"    # Ready to run simulation
     RUNNING = "running"           # Simulation in progress
     COMPLETED = "completed"       # Simulation finished
-
-
-@dataclass
-class TrafficFlow:
-    """Definition of a traffic flow between nodes."""
-    id: str
-    name: str
-    source_node_id: str
-    target_node_id: str
-    source_port_id: str
-    target_port_id: str
-    protocol: str = "UDP"         # UDP, TCP
-    data_rate: str = "1Mbps"
-    packet_size: int = 1024
-    start_time: float = 1.0       # seconds
-    stop_time: float = 10.0       # seconds
-    enabled: bool = True
 
 
 @dataclass
@@ -117,13 +105,15 @@ class Project:
     Complete project containing all simulation artifacts.
     
     This is the main container that ties together:
-    - Network topology
-    - Traffic flows  
-    - Simulation scripts
-    - Run results
+    - Network topology (stored in topology.json)
+    - Traffic flows (stored in flows.json, managed via NetworkModel.saved_flows)
+    - Simulation scripts (stored in scripts/)
+    - Run results (stored in results/)
+    
+    Note: Flows are not stored in Project directly - they are saved/loaded
+    via the NetworkModel.saved_flows or SimulationConfig.flows.
     """
     metadata: ProjectMetadata
-    flows: List[TrafficFlow] = field(default_factory=list)
     runs: List[SimulationRun] = field(default_factory=list)
     
     # Runtime state (not persisted)
@@ -365,33 +355,60 @@ class ProjectManager:
         
         metadata = ProjectMetadata(**data.get("metadata", {}))
         
-        # Load flows if present
-        flows = []
-        flows_file = path / "flows.json"
-        if flows_file.exists():
-            with open(flows_file, 'r') as f:
-                flows_data = json.load(f)
-            flows = [TrafficFlow(**f) for f in flows_data.get("flows", [])]
-        
         # Load run history
         runs = []
         for run_data in data.get("runs", []):
             runs.append(SimulationRun(**run_data))
         
-        project = Project(metadata=metadata, flows=flows, runs=runs)
+        project = Project(metadata=metadata, runs=runs)
         project._path = path
         project._state = ProjectState.SAVED
         
         self._current_project = project
         return project
     
-    def save_project(self, project: Project, network_model=None):
+    def load_flows(self, project: Project):
         """
-        Save project to disk.
+        Load flows from project's flows.json.
+        
+        Args:
+            project: Project to load flows from
+            
+        Returns:
+            List of flow dictionaries (to be converted to TrafficFlow objects by caller)
+        """
+        if not project._path:
+            return []
+        
+        flows_file = project._path / "flows.json"
+        if not flows_file.exists():
+            return []
+        
+        try:
+            with open(flows_file, 'r') as f:
+                data = json.load(f)
+            return data.get("flows", [])
+        except Exception as e:
+            print(f"Error loading flows: {e}")
+            return []
+    
+    def save_project(
+        self, 
+        project: Project, 
+        network_model=None,
+        sim_config=None,
+        script_content: str = None,
+        output_dir: str = None
+    ):
+        """
+        Save all project components to disk.
         
         Args:
             project: Project to save
             network_model: Optional NetworkModel to save as topology
+            sim_config: Optional SimulationConfig with flows to save
+            script_content: Optional generated script content to save
+            output_dir: Optional temp directory with generated files to copy
         """
         if not project._path:
             raise ValueError("Project has no path")
@@ -402,13 +419,21 @@ class ProjectManager:
         # Save project metadata
         self._save_project_metadata(project)
         
-        # Save flows
-        if project.flows:
-            self._save_flows(project)
-        
         # Save topology if provided
         if network_model:
             self._save_topology(project, network_model)
+            
+            # Save flows from network_model.saved_flows
+            if hasattr(network_model, 'saved_flows') and network_model.saved_flows:
+                self._save_flows_from_network(project, network_model)
+        
+        # Save flows from sim_config if provided
+        if sim_config and hasattr(sim_config, 'flows') and sim_config.flows:
+            self._save_flows_from_config(project, sim_config)
+        
+        # Save scripts
+        if script_content or output_dir:
+            self._save_scripts(project, script_content, output_dir)
         
         project._state = ProjectState.SAVED
     
@@ -424,16 +449,102 @@ class ProjectManager:
         with open(project_file, 'w') as f:
             json.dump(data, f, indent=2)
     
-    def _save_flows(self, project: Project):
-        """Save flows.json file."""
+    def _save_flows_from_network(self, project: Project, network_model):
+        """Save flows from network_model.saved_flows to flows.json."""
         flows_file = project._path / "flows.json"
         
-        data = {
-            "flows": [asdict(f) for f in project.flows]
-        }
+        flows_data = []
+        for flow in network_model.saved_flows:
+            # Convert TrafficFlow from simulation.py to dict
+            flow_dict = {
+                "id": flow.id,
+                "name": flow.name,
+                "source_node_id": flow.source_node_id,
+                "target_node_id": flow.target_node_id,
+                "protocol": flow.protocol.value if hasattr(flow.protocol, 'value') else str(flow.protocol),
+                "application": flow.application.value if hasattr(flow.application, 'value') else str(flow.application),
+                "start_time": flow.start_time,
+                "stop_time": flow.stop_time,
+                "data_rate": flow.data_rate,
+                "packet_size": flow.packet_size,
+                "port": getattr(flow, 'port', 9),
+                "echo_packets": getattr(flow, 'echo_packets', 10),
+                "echo_interval": getattr(flow, 'echo_interval', 1.0),
+            }
+            flows_data.append(flow_dict)
+        
+        data = {"flows": flows_data}
         
         with open(flows_file, 'w') as f:
             json.dump(data, f, indent=2)
+    
+    def _save_flows_from_config(self, project: Project, sim_config):
+        """Save flows from SimulationConfig to flows.json."""
+        flows_file = project._path / "flows.json"
+        
+        flows_data = []
+        for flow in sim_config.flows:
+            flow_dict = {
+                "id": flow.id,
+                "name": flow.name,
+                "source_node_id": flow.source_node_id,
+                "target_node_id": flow.target_node_id,
+                "protocol": flow.protocol.value if hasattr(flow.protocol, 'value') else str(flow.protocol),
+                "application": flow.application.value if hasattr(flow.application, 'value') else str(flow.application),
+                "start_time": flow.start_time,
+                "stop_time": flow.stop_time,
+                "data_rate": flow.data_rate,
+                "packet_size": flow.packet_size,
+                "port": getattr(flow, 'port', 9),
+                "echo_packets": getattr(flow, 'echo_packets', 10),
+                "echo_interval": getattr(flow, 'echo_interval', 1.0),
+            }
+            flows_data.append(flow_dict)
+        
+        data = {"flows": flows_data}
+        
+        with open(flows_file, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    def _save_scripts(self, project: Project, script_content: str = None, output_dir: str = None):
+        """Save generated scripts to project scripts directory."""
+        scripts_dir = project.scripts_dir
+        if not scripts_dir:
+            return
+        
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        apps_dir = project.apps_dir
+        if apps_dir:
+            apps_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save main script content if provided
+        if script_content:
+            script_path = scripts_dir / "gui_simulation.py"
+            with open(script_path, 'w') as f:
+                f.write(script_content)
+        
+        # Copy files from output directory if provided
+        if output_dir and Path(output_dir).exists():
+            output_path = Path(output_dir)
+            
+            # Copy all .py files from output dir
+            for py_file in output_path.glob("*.py"):
+                shutil.copy2(py_file, scripts_dir / py_file.name)
+            
+            # Copy app_base.py from templates if not in output dir
+            app_base_dest = scripts_dir / "app_base.py"
+            if not app_base_dest.exists():
+                # Try to find app_base.py in templates
+                templates_dir = Path(__file__).parent.parent / "templates"
+                app_base_src = templates_dir / "app_base.py"
+                if app_base_src.exists():
+                    shutil.copy2(app_base_src, app_base_dest)
+            
+            # Copy apps subdirectory
+            apps_src = output_path / "apps"
+            if apps_src.exists() and apps_dir:
+                for app_file in apps_src.glob("*.py"):
+                    shutil.copy2(app_file, apps_dir / app_file.name)
     
     def _save_topology(self, project: Project, network_model):
         """Save topology.json file."""

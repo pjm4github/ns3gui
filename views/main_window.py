@@ -1332,26 +1332,12 @@ class MainWindow(QMainWindow):
             with open(run_info_file, 'w') as f:
                 json.dump(run_info, f, indent=2)
             
-            # Copy generated scripts to project scripts directory
-            if self._sim_output_dir and Path(self._sim_output_dir).exists():
-                scripts_dir = self._current_project.scripts_dir
-                if scripts_dir:
-                    import shutil
-                    scripts_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    for script_file in Path(self._sim_output_dir).glob("*.py"):
-                        shutil.copy2(script_file, scripts_dir / script_file.name)
-                    
-                    # Copy apps subdirectory if exists
-                    apps_src = Path(self._sim_output_dir) / "apps"
-                    if apps_src.exists():
-                        apps_dest = self._current_project.apps_dir
-                        if apps_dest:
-                            apps_dest.mkdir(parents=True, exist_ok=True)
-                            for app_file in apps_src.glob("*.py"):
-                                shutil.copy2(app_file, apps_dest / app_file.name)
-                    
-                    self.stats_panel.log_console("INFO", f"Scripts saved to: {scripts_dir}")
+            # Copy generated scripts to project scripts directory using project manager
+            self.project_mgr._save_scripts(
+                self._current_project, 
+                output_dir=self._sim_output_dir
+            )
+            self.stats_panel.log_console("INFO", f"Scripts saved to: {self._current_project.scripts_dir}")
             
             # Add run record to project
             run_record = SimulationRun(
@@ -1373,8 +1359,14 @@ class MainWindow(QMainWindow):
             )
             self.project_mgr.add_simulation_run(self._current_project, run_record)
             
-            # Also save the topology to ensure it's current
-            self.project_mgr.save_project(self._current_project, self.network_model)
+            # Save the complete project (topology, flows, scripts)
+            self._sync_flows_to_network_model()
+            self.project_mgr.save_project(
+                self._current_project, 
+                network_model=self.network_model,
+                sim_config=self.sim_config,
+                output_dir=self._sim_output_dir
+            )
             
             self.stats_panel.log_console("SUCCESS", f"Results saved to project: {run_dir}")
             
@@ -1641,19 +1633,32 @@ class MainWindow(QMainWindow):
                 
                 # Load topology if present
                 try:
+                    # Clear current topology first
+                    self.canvas.topology_scene.clear_topology()
+                    
                     network = self.project_mgr.load_topology(project)
                     if network:
+                        # Replace network model and rebuild canvas
                         self.network_model = network
-                        self.canvas.load_network(network)
+                        self.property_panel.set_network_model(self.network_model)
+                        
+                        # Recreate visual items from loaded model
+                        self._rebuild_canvas_from_model()
+                        
                         self.property_panel.set_selection(None)
                         self.stats_panel.reset()
                         self._update_counts()
-                        self.statusBar().showMessage(
-                            f"Opened project: {project.name} ({len(network.nodes)} nodes)", 
-                            3000
-                        )
+                        
+                        # Load flows from project and sync to sim_config
+                        self._load_project_flows(project)
+                        
+                        flow_count = len(self.sim_config.flows)
+                        msg = f"Opened project: {project.name} ({len(network.nodes)} nodes"
+                        if flow_count > 0:
+                            msg += f", {flow_count} flows"
+                        msg += ")"
+                        self.statusBar().showMessage(msg, 3000)
                     else:
-                        self.canvas.topology_scene.clear_topology()
                         self.statusBar().showMessage(
                             f"Opened project: {project.name} (no topology)", 
                             3000
@@ -1663,8 +1668,52 @@ class MainWindow(QMainWindow):
                         self, "Warning", 
                         f"Could not load topology:\n{e}"
                     )
+                    import traceback
+                    traceback.print_exc()
                 
                 self._update_window_title()
+    
+    def _load_project_flows(self, project):
+        """Load flows from project into sim_config."""
+        from models import TrafficFlow, TrafficProtocol, TrafficApplication
+        
+        flows_data = self.project_mgr.load_flows(project)
+        if not flows_data:
+            return
+        
+        self.sim_config.flows.clear()
+        for flow_dict in flows_data:
+            try:
+                # Convert string protocol/application to enums
+                protocol = flow_dict.get('protocol', 'UDP')
+                if isinstance(protocol, str):
+                    protocol = TrafficProtocol(protocol) if protocol in [p.value for p in TrafficProtocol] else TrafficProtocol.UDP
+                
+                application = flow_dict.get('application', 'ONOFF')
+                if isinstance(application, str):
+                    application = TrafficApplication(application) if application in [a.value for a in TrafficApplication] else TrafficApplication.ONOFF
+                
+                flow = TrafficFlow(
+                    id=flow_dict.get('id', ''),
+                    name=flow_dict.get('name', ''),
+                    source_node_id=flow_dict.get('source_node_id', ''),
+                    target_node_id=flow_dict.get('target_node_id', ''),
+                    protocol=protocol,
+                    application=application,
+                    start_time=flow_dict.get('start_time', 1.0),
+                    stop_time=flow_dict.get('stop_time', 9.0),
+                    data_rate=flow_dict.get('data_rate', '500kb/s'),
+                    packet_size=flow_dict.get('packet_size', 1024),
+                    port=flow_dict.get('port', 9),
+                    echo_packets=flow_dict.get('echo_packets', 10),
+                    echo_interval=flow_dict.get('echo_interval', 1.0),
+                )
+                self.sim_config.flows.append(flow)
+                
+                # Also add to network model saved_flows
+                self.network_model.saved_flows.append(flow)
+            except Exception as e:
+                print(f"Error loading flow: {e}")
     
     def _on_project_info(self):
         """Show current project information."""
@@ -1694,7 +1743,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Workspace changed to: {new_path}", 3000)
     
     def _save_current_project(self):
-        """Save the current project including topology and flows."""
+        """Save the current project including topology, flows, and scripts."""
         if not self._current_project:
             return False
         
@@ -1702,13 +1751,18 @@ class MainWindow(QMainWindow):
             # Save flows to network model before saving project
             self._sync_flows_to_network_model()
             
-            # Save project (includes topology)
-            self.project_mgr.save_project(self._current_project, self.network_model)
+            # Save project with all components
+            self.project_mgr.save_project(
+                self._current_project, 
+                network_model=self.network_model,
+                sim_config=self.sim_config,
+                output_dir=self._sim_output_dir if self._sim_output_dir else None
+            )
             
             # Build status message
             node_count = len(self.network_model.nodes)
             link_count = len(self.network_model.links)
-            flow_count = len(self.network_model.saved_flows)
+            flow_count = len(self.sim_config.flows) if self.sim_config.flows else len(self.network_model.saved_flows)
             
             msg = f"Project saved: {self._current_project.name} ({node_count} nodes, {link_count} links"
             if flow_count > 0:
@@ -1719,6 +1773,8 @@ class MainWindow(QMainWindow):
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _sync_flows_to_network_model(self):

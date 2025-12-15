@@ -31,7 +31,6 @@ from .simulation import (
 )
 from .project import (
     ProjectState,
-    TrafficFlow as ProjectTrafficFlow,
     SimulationRun,
     ProjectMetadata,
     Project,
@@ -68,7 +67,6 @@ __all__ = [
     "SimulationResults",
     # Project
     "ProjectState",
-    "ProjectTrafficFlow",
     "SimulationRun",
     "ProjectMetadata",
     "Project",
