@@ -29,8 +29,17 @@ from .simulation import (
     FlowStats,
     SimulationResults,
 )
+from .project import (
+    ProjectState,
+    TrafficFlow as ProjectTrafficFlow,
+    SimulationRun,
+    ProjectMetadata,
+    Project,
+    ProjectManager,
+)
 
 __all__ = [
+    # Network
     "NodeType",
     "MediumType",
     "ChannelType",
@@ -47,6 +56,7 @@ __all__ = [
     "NetworkModel",
     "PORT_TYPE_SPECS",
     "DEFAULT_PORT_CONFIGS",
+    # Simulation
     "SimulationStatus",
     "SimulationStats",
     "SimulationState",
@@ -56,4 +66,11 @@ __all__ = [
     "SimulationConfig",
     "FlowStats",
     "SimulationResults",
+    # Project
+    "ProjectState",
+    "ProjectTrafficFlow",
+    "SimulationRun",
+    "ProjectMetadata",
+    "Project",
+    "ProjectManager",
 ]

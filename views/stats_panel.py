@@ -377,6 +377,10 @@ class ConsoleTab(QWidget):
         from PyQt6.QtWidgets import QApplication
         QApplication.clipboard().setText(self._console.toPlainText())
     
+    def get_text(self) -> str:
+        """Get all console text as plain text."""
+        return self._console.toPlainText()
+    
     def start_session(self):
         """Start a new logging session."""
         from datetime import datetime
@@ -807,6 +811,10 @@ class StatsPanel(QWidget):
     def log_console(self, level: str, message: str):
         """Log a message with specified level to the console."""
         self._console_tab.log(level, message)
+    
+    def get_console_text(self) -> str:
+        """Get all console text as plain text."""
+        return self._console_tab.get_text()
     
     def start_console_session(self):
         """Start a new console logging session."""

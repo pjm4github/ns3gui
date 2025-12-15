@@ -25,10 +25,14 @@ from models import (
     NetworkModel, NodeModel, NodeType, PortConfig, 
     SimulationState, SimulationStatus, SimulationConfig,
     TrafficFlow, TrafficApplication, TrafficProtocol,
-    SimulationResults
+    SimulationResults, Project, ProjectManager as ProjectMgr
 )
 from views import TopologyCanvas, PropertyPanel, NodePalette, StatsPanel, PlaybackControls
 from views.settings_dialog import SettingsDialog
+from views.project_dialog import (
+    NewProjectDialog, OpenProjectDialog, 
+    WorkspaceSettingsDialog, ProjectInfoDialog
+)
 from services import (
     ProjectManager, export_to_mininet,
     NS3ScriptGenerator, NS3SimulationManager, NS3Detector,
@@ -291,8 +295,14 @@ class MainWindow(QMainWindow):
         # Models
         self.network_model = NetworkModel()
         self.simulation_state = SimulationState()
-        self.project_manager = ProjectManager()
+        self.project_manager = ProjectManager()  # Legacy file-based manager
         self.sim_config = SimulationConfig()
+        
+        # Project manager (new project-based workflow)
+        workspace_root = self.settings_manager.paths.get_workspace_root()
+        self.project_mgr = ProjectMgr(workspace_root)
+        self.project_mgr.ensure_workspace()
+        self._current_project: Optional[Project] = None
         
         # Simulation manager
         self.sim_manager = NS3SimulationManager()
@@ -377,9 +387,14 @@ class MainWindow(QMainWindow):
         """)
     
     def _update_window_title(self):
-        """Update window title with current file name."""
+        """Update window title with current project/file name."""
         base_title = "ns-3 Network Simulator"
-        if self.project_manager.has_file:
+        
+        # Check if we have a project open
+        if self._current_project:
+            project_name = self._current_project.name
+            self.setWindowTitle(f"{project_name} - {base_title}")
+        elif self.project_manager.has_file:
             filename = self.project_manager.current_file.name
             self.setWindowTitle(f"{filename} - {base_title}")
         else:
@@ -391,6 +406,37 @@ class MainWindow(QMainWindow):
         
         # File menu
         file_menu = menubar.addMenu("&File")
+        
+        # Project submenu
+        project_menu = file_menu.addMenu("&Project")
+        
+        new_project_action = QAction("&New Project...", self)
+        new_project_action.setShortcut("Ctrl+Shift+N")
+        new_project_action.setStatusTip("Create a new project")
+        new_project_action.triggered.connect(self._on_new_project)
+        project_menu.addAction(new_project_action)
+        
+        open_project_action = QAction("&Open Project...", self)
+        open_project_action.setShortcut("Ctrl+Shift+O")
+        open_project_action.setStatusTip("Open an existing project")
+        open_project_action.triggered.connect(self._on_open_project)
+        project_menu.addAction(open_project_action)
+        
+        project_menu.addSeparator()
+        
+        project_info_action = QAction("Project &Info...", self)
+        project_info_action.setStatusTip("View current project details")
+        project_info_action.triggered.connect(self._on_project_info)
+        project_menu.addAction(project_info_action)
+        
+        project_menu.addSeparator()
+        
+        workspace_action = QAction("&Workspace Settings...", self)
+        workspace_action.setStatusTip("Configure workspace location")
+        workspace_action.triggered.connect(self._on_workspace_settings)
+        project_menu.addAction(workspace_action)
+        
+        file_menu.addSeparator()
         
         new_action = QAction("&New Topology", self)
         new_action.setShortcut(QKeySequence.StandardKey.New)
@@ -1054,15 +1100,33 @@ class MainWindow(QMainWindow):
     
     def _save_script_to_workspace(self, script: str):
         """
-        Save generated script to workspace directory for reference.
+        Save generated script to project or workspace directory.
         
-        Creates a 'generated_scripts' folder in the workspace and saves
-        the script with a timestamp.
+        If a project is open, saves to the project's scripts directory.
+        Otherwise creates a 'generated_scripts' folder in the workspace.
+        
+        Note: Support files (app_base.py, app scripts) are copied after
+        simulation completes in _save_simulation_results().
         """
         import os
         from datetime import datetime
         
-        # Determine workspace directory
+        # If we have a project, save to project scripts directory
+        if self._current_project and self._current_project.scripts_dir:
+            scripts_dir = self._current_project.scripts_dir
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save main simulation script
+            script_path = scripts_dir / "gui_simulation.py"
+            try:
+                with open(script_path, 'w') as f:
+                    f.write(script)
+                self.stats_panel.log_console("INFO", f"Script saved to: {script_path}")
+            except Exception as e:
+                self.stats_panel.log_console("WARN", f"Could not save script: {e}")
+            return
+        
+        # Fallback: save to workspace generated_scripts directory
         if self._current_project_path:
             workspace_dir = os.path.dirname(self._current_project_path)
         else:
@@ -1167,11 +1231,157 @@ class MainWindow(QMainWindow):
                         f"Loaded {self.trace_player.event_count} packet events for replay", 
                         5000
                     )
+            
+            # Save results to project if we have one
+            self._save_simulation_results(results, success=True)
         else:
             self.simulation_state.set_error(results.error_message)
             self.stats_panel.set_status(SimulationStatus.ERROR)
             self.stats_panel.log_console("ERROR", f"Simulation failed: {results.error_message}")
             self.statusBar().showMessage(f"Simulation failed: {results.error_message}", 5000)
+            
+            # Save failed results to project too
+            self._save_simulation_results(results, success=False)
+    
+    def _save_simulation_results(self, results: SimulationResults, success: bool):
+        """Save simulation results to the current project."""
+        if not self._current_project:
+            return
+        
+        import json
+        from datetime import datetime
+        from models.project import SimulationRun
+        
+        try:
+            # Create timestamped run directory
+            run_dir = self._current_project.create_run_dir()
+            run_id = run_dir.name
+            
+            # Save console output
+            console_log_path = ""
+            if results.console_output:
+                console_file = run_dir / "console.log"
+                with open(console_file, 'w', encoding='utf-8') as f:
+                    f.write(results.console_output)
+                console_log_path = f"results/{run_id}/console.log"
+                self.stats_panel.log_console("INFO", f"Console log saved to: {console_file}")
+            
+            # Copy trace file if exists
+            trace_file_path = ""
+            if results.trace_file_path and Path(results.trace_file_path).exists():
+                import shutil
+                trace_dest = run_dir / "trace.xml"
+                shutil.copy2(results.trace_file_path, trace_dest)
+                trace_file_path = f"results/{run_id}/trace.xml"
+                self.stats_panel.log_console("INFO", f"Trace file saved to: {trace_dest}")
+            
+            # Copy PCAP files if any
+            if results.pcap_files:
+                pcap_dir = run_dir / "pcap"
+                pcap_dir.mkdir(exist_ok=True)
+                import shutil
+                for pcap_path in results.pcap_files:
+                    if Path(pcap_path).exists():
+                        shutil.copy2(pcap_path, pcap_dir / Path(pcap_path).name)
+                self.stats_panel.log_console("INFO", f"PCAP files saved to: {pcap_dir}")
+            
+            # Save statistics as JSON
+            stats_file_path = ""
+            stats_data = {
+                "success": success,
+                "duration_configured": self.sim_config.duration,
+                "duration_actual": results.duration_actual,
+                "total_tx_packets": results.total_tx_packets,
+                "total_rx_packets": results.total_rx_packets,
+                "total_lost_packets": results.total_lost_packets,
+                "average_throughput_mbps": results.average_throughput_mbps,
+                "average_delay_ms": results.average_delay_ms,
+                "flow_stats": [
+                    {
+                        "flow_id": f.flow_id,
+                        "source": f.source,
+                        "destination": f.destination,
+                        "protocol": f.protocol,
+                        "tx_packets": f.tx_packets,
+                        "rx_packets": f.rx_packets,
+                        "lost_packets": f.lost_packets,
+                        "throughput_mbps": f.throughput_mbps,
+                        "mean_delay_ms": f.mean_delay_ms,
+                        "jitter_ms": f.jitter_ms
+                    }
+                    for f in results.flow_stats
+                ]
+            }
+            stats_file = run_dir / "stats.json"
+            with open(stats_file, 'w') as f:
+                json.dump(stats_data, f, indent=2)
+            stats_file_path = f"results/{run_id}/stats.json"
+            
+            # Save run info
+            run_info = {
+                "id": run_id,
+                "timestamp": datetime.now().isoformat(),
+                "status": "success" if success else "failed",
+                "error_message": results.error_message if not success else "",
+                "node_count": len(self.network_model.nodes),
+                "link_count": len(self.network_model.links),
+                "duration": self.sim_config.duration,
+                "ns3_path": self.sim_manager.ns3_path
+            }
+            run_info_file = run_dir / "run_info.json"
+            with open(run_info_file, 'w') as f:
+                json.dump(run_info, f, indent=2)
+            
+            # Copy generated scripts to project scripts directory
+            if self._sim_output_dir and Path(self._sim_output_dir).exists():
+                scripts_dir = self._current_project.scripts_dir
+                if scripts_dir:
+                    import shutil
+                    scripts_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    for script_file in Path(self._sim_output_dir).glob("*.py"):
+                        shutil.copy2(script_file, scripts_dir / script_file.name)
+                    
+                    # Copy apps subdirectory if exists
+                    apps_src = Path(self._sim_output_dir) / "apps"
+                    if apps_src.exists():
+                        apps_dest = self._current_project.apps_dir
+                        if apps_dest:
+                            apps_dest.mkdir(parents=True, exist_ok=True)
+                            for app_file in apps_src.glob("*.py"):
+                                shutil.copy2(app_file, apps_dest / app_file.name)
+                    
+                    self.stats_panel.log_console("INFO", f"Scripts saved to: {scripts_dir}")
+            
+            # Add run record to project
+            run_record = SimulationRun(
+                id=run_id,
+                timestamp=datetime.now().isoformat(),
+                duration=self.sim_config.duration,
+                status="success" if success else "failed",
+                console_log_path=console_log_path,
+                trace_file_path=trace_file_path,
+                stats_file_path=stats_file_path,
+                error_message=results.error_message if not success else "",
+                node_count=len(self.network_model.nodes),
+                link_count=len(self.network_model.links),
+                flow_count=len(results.flow_stats),
+                packets_sent=results.total_tx_packets,
+                packets_received=results.total_rx_packets,
+                packets_dropped=results.total_lost_packets,
+                throughput_mbps=results.average_throughput_mbps
+            )
+            self.project_mgr.add_simulation_run(self._current_project, run_record)
+            
+            # Also save the topology to ensure it's current
+            self.project_mgr.save_project(self._current_project, self.network_model)
+            
+            self.stats_panel.log_console("SUCCESS", f"Results saved to project: {run_dir}")
+            
+        except Exception as e:
+            self.stats_panel.log_console("ERROR", f"Failed to save results: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _on_simulation_error(self, error_msg: str):
         """Handle simulation error."""
@@ -1179,6 +1389,49 @@ class MainWindow(QMainWindow):
         self.simulation_state.set_error(error_msg)
         self.stats_panel.set_status(SimulationStatus.ERROR)
         self.stats_panel.log_console("ERROR", error_msg)
+        
+        # Save error to project
+        if self._current_project:
+            from models.project import SimulationRun
+            from datetime import datetime
+            import json
+            
+            try:
+                run_dir = self._current_project.create_run_dir()
+                run_id = run_dir.name
+                
+                # Save error info
+                error_info = {
+                    "status": "error",
+                    "error_message": error_msg,
+                    "timestamp": datetime.now().isoformat(),
+                    "node_count": len(self.network_model.nodes),
+                    "link_count": len(self.network_model.links)
+                }
+                with open(run_dir / "error_info.json", 'w') as f:
+                    json.dump(error_info, f, indent=2)
+                
+                # Save console output if available
+                console_text = self.stats_panel.get_console_text()
+                if console_text:
+                    with open(run_dir / "console.log", 'w') as f:
+                        f.write(console_text)
+                
+                # Add run record
+                run_record = SimulationRun(
+                    id=run_id,
+                    timestamp=datetime.now().isoformat(),
+                    duration=self.sim_config.duration,
+                    status="error",
+                    error_message=error_msg,
+                    console_log_path=f"results/{run_id}/console.log",
+                    node_count=len(self.network_model.nodes),
+                    link_count=len(self.network_model.links)
+                )
+                self.project_mgr.add_simulation_run(self._current_project, run_record)
+                
+            except Exception as e:
+                print(f"Failed to save error to project: {e}")
         
         # Show detailed error dialog
         error_dialog = QMessageBox(self)
@@ -1361,6 +1614,140 @@ class MainWindow(QMainWindow):
         }
         self.toolbar.status_label.setText(status_text.get(status, "Unknown"))
     
+    # ==================== Project Management ====================
+    
+    def _on_new_project(self):
+        """Create a new project."""
+        dialog = NewProjectDialog(self.project_mgr, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            project = dialog.get_project()
+            if project:
+                self._current_project = project
+                # Clear current topology for new project
+                self.canvas.topology_scene.clear_topology()
+                self.property_panel.set_selection(None)
+                self.stats_panel.reset()
+                self._update_counts()
+                self._update_window_title()
+                self.statusBar().showMessage(f"Created project: {project.name}", 3000)
+    
+    def _on_open_project(self):
+        """Open an existing project."""
+        dialog = OpenProjectDialog(self.project_mgr, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            project = dialog.get_project()
+            if project:
+                self._current_project = project
+                
+                # Load topology if present
+                try:
+                    network = self.project_mgr.load_topology(project)
+                    if network:
+                        self.network_model = network
+                        self.canvas.load_network(network)
+                        self.property_panel.set_selection(None)
+                        self.stats_panel.reset()
+                        self._update_counts()
+                        self.statusBar().showMessage(
+                            f"Opened project: {project.name} ({len(network.nodes)} nodes)", 
+                            3000
+                        )
+                    else:
+                        self.canvas.topology_scene.clear_topology()
+                        self.statusBar().showMessage(
+                            f"Opened project: {project.name} (no topology)", 
+                            3000
+                        )
+                except Exception as e:
+                    QMessageBox.warning(
+                        self, "Warning", 
+                        f"Could not load topology:\n{e}"
+                    )
+                
+                self._update_window_title()
+    
+    def _on_project_info(self):
+        """Show current project information."""
+        if not self._current_project:
+            QMessageBox.information(
+                self, "No Project",
+                "No project is currently open.\n\n"
+                "Use File → Project → New Project to create one,\n"
+                "or File → Project → Open Project to open an existing one."
+            )
+            return
+        
+        dialog = ProjectInfoDialog(self._current_project, self)
+        dialog.exec()
+    
+    def _on_workspace_settings(self):
+        """Configure workspace settings."""
+        dialog = WorkspaceSettingsDialog(self.settings_manager, self)
+        dialog.workspaceChanged.connect(self._on_workspace_changed)
+        dialog.exec()
+    
+    def _on_workspace_changed(self, new_path: str):
+        """Handle workspace location change."""
+        # Reinitialize project manager with new workspace
+        self.project_mgr = ProjectMgr(Path(new_path))
+        self.project_mgr.ensure_workspace()
+        self.statusBar().showMessage(f"Workspace changed to: {new_path}", 3000)
+    
+    def _save_current_project(self):
+        """Save the current project including topology and flows."""
+        if not self._current_project:
+            return False
+        
+        try:
+            # Save flows to network model before saving project
+            self._sync_flows_to_network_model()
+            
+            # Save project (includes topology)
+            self.project_mgr.save_project(self._current_project, self.network_model)
+            
+            # Build status message
+            node_count = len(self.network_model.nodes)
+            link_count = len(self.network_model.links)
+            flow_count = len(self.network_model.saved_flows)
+            
+            msg = f"Project saved: {self._current_project.name} ({node_count} nodes, {link_count} links"
+            if flow_count > 0:
+                msg += f", {flow_count} flows"
+            msg += ")"
+            
+            self.statusBar().showMessage(msg, 3000)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
+            return False
+    
+    def _sync_flows_to_network_model(self):
+        """Sync current simulation config flows to network model for saving."""
+        if not self.sim_config.flows:
+            return
+        
+        # Save flows to network model
+        self.network_model.saved_flows.clear()
+        for flow in self.sim_config.flows:
+            # Store a copy
+            saved_flow = TrafficFlow(
+                id=flow.id,
+                name=flow.name,
+                source_node_id=flow.source_node_id,
+                target_node_id=flow.target_node_id,
+                protocol=flow.protocol,
+                application=flow.application,
+                start_time=flow.start_time,
+                stop_time=flow.stop_time,
+                data_rate=flow.data_rate,
+                packet_size=flow.packet_size,
+                echo_packets=flow.echo_packets,
+                echo_interval=flow.echo_interval
+            )
+            self.network_model.saved_flows.append(saved_flow)
+    
+    # ==================== File Operations ====================
+
     def _on_new_topology(self):
         """Create new topology."""
         if len(self.network_model.nodes) > 0:
@@ -1488,14 +1875,33 @@ class MainWindow(QMainWindow):
             )
     
     def _on_save_file(self):
-        """Save to current file or prompt for new file."""
-        if self.project_manager.has_file:
+        """Save to current file or project."""
+        # If we have a project open, save to project
+        if self._current_project:
+            self._save_current_project()
+        elif self.project_manager.has_file:
             self._save_to_file(self.project_manager.current_file)
         else:
             self._on_save_file_as()
     
     def _on_save_file_as(self):
         """Save topology to a new file."""
+        # If we have a project, offer to save to project or new file
+        if self._current_project:
+            reply = QMessageBox.question(
+                self,
+                "Save As",
+                f"You have project '{self._current_project.name}' open.\n\n"
+                "Do you want to save to the project?\n\n"
+                "Click 'Yes' to save to project, 'No' to save to a different file.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._save_current_project()
+                return
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return
+        
         # Get default directory from settings
         default_dir = self.settings_manager.get_save_directory()
         default_path = os.path.join(default_dir, "topology.json") if default_dir else "topology.json"
@@ -1519,6 +1925,9 @@ class MainWindow(QMainWindow):
     def _save_to_file(self, filepath: Path):
         """Save network model to the specified file."""
         try:
+            # Sync flows to network model before saving
+            self._sync_flows_to_network_model()
+            
             if self.project_manager.save(self.network_model, filepath):
                 self._update_window_title()
                 

@@ -2570,6 +2570,14 @@ class TopologyCanvas(QGraphicsView):
                     break
             
             if port_item:
+                # Check if parent node is selected - if so, let port handle drag
+                parent_selected = port_item.parent_node.isSelected()
+                
+                if parent_selected:
+                    # Let the port's mousePressEvent handle dragging
+                    super().mousePressEvent(event)
+                    return
+                
                 # Check if it's a PY port (can't start links from PY ports)
                 is_py = hasattr(port_item, 'is_py_port') and port_item.is_py_port
                 if not is_py and not port_item.port.is_connected:
@@ -2597,11 +2605,15 @@ class TopologyCanvas(QGraphicsView):
                     node_item = item
             
             if port_item:
-                is_py = hasattr(port_item, 'is_py_port') and port_item.is_py_port
-                if not is_py and not port_item.port.is_connected:
-                    self.topology_scene.start_link_from_port(port_item)
-                    self._is_creating_link = True
-                    self._link_start_button = Qt.MouseButton.RightButton
+                # Check if parent node is selected - if so, don't start link
+                parent_selected = port_item.parent_node.isSelected()
+                
+                if not parent_selected:
+                    is_py = hasattr(port_item, 'is_py_port') and port_item.is_py_port
+                    if not is_py and not port_item.port.is_connected:
+                        self.topology_scene.start_link_from_port(port_item)
+                        self._is_creating_link = True
+                        self._link_start_button = Qt.MouseButton.RightButton
                 event.accept()
             elif node_item:
                 available_ports = node_item.node_model.get_available_ports()

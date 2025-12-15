@@ -50,22 +50,44 @@ class NS3ImportDialog(QDialog):
     def _setup_ui(self):
         """Set up the dialog UI."""
         self.setWindowTitle("Import ns-3 Example")
-        self.setMinimumSize(600, 500)
+        self.setMinimumSize(800, 700)
         
         layout = QVBoxLayout(self)
         
         # ns-3 path info
         ns3_group = QGroupBox("ns-3 Installation")
-        ns3_layout = QFormLayout(ns3_group)
+        ns3_layout = QHBoxLayout(ns3_group)
         
         self._ns3_path_label = QLabel()
         self._ns3_path_label.setWordWrap(True)
-        ns3_layout.addRow("Path:", self._ns3_path_label)
+        ns3_layout.addWidget(QLabel("Path:"))
+        ns3_layout.addWidget(self._ns3_path_label, 1)
+        
+        # Scan button
+        self._scan_btn = QPushButton("Scan for Python Files")
+        self._scan_btn.clicked.connect(self._on_scan)
+        ns3_layout.addWidget(self._scan_btn)
         
         layout.addWidget(ns3_group)
         
-        # File selection
-        file_group = QGroupBox("Select Python Script")
+        # Scanned files table
+        scan_group = QGroupBox("Discovered Python Files (double-click to select)")
+        scan_layout = QVBoxLayout(scan_group)
+        
+        self._scan_table = QListWidget()
+        self._scan_table.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._scan_table.itemDoubleClicked.connect(self._on_scan_item_double_clicked)
+        self._scan_table.setMinimumHeight(150)
+        scan_layout.addWidget(self._scan_table)
+        
+        self._scan_status_label = QLabel("Click 'Scan for Python Files' to search ns-3 directory")
+        self._scan_status_label.setStyleSheet("color: #6B7280;")
+        scan_layout.addWidget(self._scan_status_label)
+        
+        layout.addWidget(scan_group)
+        
+        # File selection (manual)
+        file_group = QGroupBox("Selected Python Script")
         file_layout = QHBoxLayout(file_group)
         
         self._file_edit = QLineEdit()
@@ -85,7 +107,7 @@ class NS3ImportDialog(QDialog):
         
         self._preview_text = QTextEdit()
         self._preview_text.setReadOnly(True)
-        self._preview_text.setMaximumHeight(200)
+        self._preview_text.setMaximumHeight(150)
         preview_layout.addWidget(self._preview_text)
         
         # Parse button
@@ -145,12 +167,110 @@ class NS3ImportDialog(QDialog):
         """Update ns-3 path display."""
         ns3_path = self.settings_manager.ns3_path
         if ns3_path:
-            self._ns3_path_label.setText(ns3_path)
+            # Show Windows-accessible path if on Windows
+            if is_windows() and ns3_path.startswith('/'):
+                distro = self.settings_manager.wsl_distribution or "Ubuntu"
+                display_path = wsl_to_windows_path(ns3_path, distro)
+            else:
+                display_path = ns3_path
+            
+            self._ns3_path_label.setText(display_path)
             self._ns3_path_label.setStyleSheet("color: #059669;")
         else:
             self._ns3_path_label.setText("Not configured - set in Settings")
             self._ns3_path_label.setStyleSheet("color: #DC2626;")
     
+    def _on_scan(self):
+        """Scan ns-3 directory for Python files using find command."""
+        import subprocess
+        
+        ns3_path = self.settings_manager.ns3_path
+        if not ns3_path:
+            QMessageBox.warning(
+                self,
+                "ns-3 Not Found",
+                "Please configure the ns-3 path in Settings first."
+            )
+            return
+        
+        self._scan_table.clear()
+        self._scan_status_label.setText("Scanning...")
+        self._scan_status_label.setStyleSheet("color: #6B7280;")
+        QApplication.processEvents()
+        
+        try:
+            # Run find command via WSL on Windows
+            if is_windows():
+                distro = self.settings_manager.wsl_distribution or "Ubuntu"
+                # Use bash -c to properly handle the find command with quoted pattern
+                find_cmd = f'find "{ns3_path}" -name "*.py" -type f'
+                cmd = ["wsl", "-d", distro, "bash", "-c", find_cmd]
+            else:
+                # Native Linux/Mac
+                cmd = ["find", ns3_path, "-name", "*.py", "-type", "f"]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60  # 60 second timeout
+            )
+            
+            if result.returncode != 0:
+                self._scan_status_label.setText(f"Scan failed: {result.stderr[:100]}")
+                self._scan_status_label.setStyleSheet("color: #DC2626;")
+                return
+            
+            # Parse results - these are Linux paths from WSL
+            files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+            
+            # Filter out __pycache__, test files, etc.
+            filtered_files = []
+            for f in files:
+                if '__pycache__' in f:
+                    continue
+                if '/.git/' in f or '\\.git\\' in f:
+                    continue
+                # Keep the file
+                filtered_files.append(f)
+            
+            # Sort by path
+            filtered_files.sort()
+            
+            # Get distro for path conversion
+            distro = self.settings_manager.wsl_distribution or "Ubuntu"
+            
+            # Populate table with Windows-accessible paths
+            for linux_path in filtered_files:
+                # Convert to Windows path for display and use
+                if is_windows():
+                    win_path = wsl_to_windows_path(linux_path, distro)
+                    display_path = win_path
+                else:
+                    display_path = linux_path
+                
+                item = QListWidgetItem(display_path)
+                # Store the Windows-accessible path as data
+                item.setData(Qt.ItemDataRole.UserRole, display_path)
+                self._scan_table.addItem(item)
+            
+            self._scan_status_label.setText(f"Found {len(filtered_files)} Python files. Double-click to select.")
+            self._scan_status_label.setStyleSheet("color: #059669;")
+            
+        except subprocess.TimeoutExpired:
+            self._scan_status_label.setText("Scan timed out. Try a more specific path.")
+            self._scan_status_label.setStyleSheet("color: #DC2626;")
+        except Exception as e:
+            self._scan_status_label.setText(f"Scan error: {str(e)[:100]}")
+            self._scan_status_label.setStyleSheet("color: #DC2626;")
+    
+    def _on_scan_item_double_clicked(self, item: QListWidgetItem):
+        """Handle double-click on scanned file - populate file edit."""
+        filepath = item.data(Qt.ItemDataRole.UserRole)
+        if filepath:
+            # Path is already in the correct format (Windows or Linux)
+            self._file_edit.setText(filepath)
+
     def _on_browse(self):
         """Browse for ns-3 Python script."""
         # Start in ns-3 examples directory if available
