@@ -13,21 +13,18 @@ Directory Structure:
     └── my_network/                    # Project folder (project name)
         ├── project.json               # Project metadata and settings
         ├── topology.json              # Network topology definition
-        ├── flows.json                 # Traffic flow definitions
+        ├── flows.json                 # Current traffic flow definitions
         ├── scripts/                   # Generated simulation files
         │   ├── gui_simulation.py      # Main simulation script
         │   ├── app_base.py            # Application base class
-        │   └── apps/                  # Host application scripts
-        │       ├── host1_sender.py
-        │       └── host2_receiver.py
-        ├── results/                   # Simulation results
-        │   └── run_YYYYMMDD_HHMMSS/   # Timestamped run folder
-        │       ├── run_info.json      # Run metadata
-        │       ├── console.log        # WSL console output
-        │       ├── trace.xml          # ns-3 trace file
-        │       └── stats.json         # Parsed statistics
-        └── imports/                   # Imported ns-3 examples
-            └── original_script.py     # Copy of imported script
+        │   └── *.py                   # Host application scripts
+        └── results/                   # Simulation results
+            └── run_YYYYMMDD_HHMMSS/   # Timestamped run folder
+                ├── run_info.json      # Run metadata
+                ├── flows.json         # Flows used for this run
+                ├── console.log        # WSL console output
+                ├── trace.xml          # ns-3 trace file
+                └── stats.json         # Parsed statistics
 """
 
 import json
@@ -157,24 +154,10 @@ class Project:
         return None
     
     @property
-    def apps_dir(self) -> Optional[Path]:
-        """Get path to application scripts directory."""
-        if self._path:
-            return self._path / "scripts" / "apps"
-        return None
-    
-    @property
     def results_dir(self) -> Optional[Path]:
         """Get path to results directory."""
         if self._path:
             return self._path / "results"
-        return None
-    
-    @property
-    def imports_dir(self) -> Optional[Path]:
-        """Get path to imports directory."""
-        if self._path:
-            return self._path / "imports"
         return None
     
     def get_run_dir(self, run_id: str) -> Optional[Path]:
@@ -304,9 +287,8 @@ class ProjectManager:
         
         # Create directory structure
         project_path.mkdir(parents=True)
-        (project_path / "scripts" / "apps").mkdir(parents=True)
+        (project_path / "scripts").mkdir()
         (project_path / "results").mkdir()
-        (project_path / "imports").mkdir()
         
         # Create metadata
         now = datetime.now().isoformat()
@@ -513,9 +495,6 @@ class ProjectManager:
             return
         
         scripts_dir.mkdir(parents=True, exist_ok=True)
-        apps_dir = project.apps_dir
-        if apps_dir:
-            apps_dir.mkdir(parents=True, exist_ok=True)
         
         # Save main script content if provided
         if script_content:
@@ -527,11 +506,17 @@ class ProjectManager:
         if output_dir and Path(output_dir).exists():
             output_path = Path(output_dir)
             
-            # Copy all .py files from output dir
+            # Copy all .py files from output dir (includes app scripts)
             for py_file in output_path.glob("*.py"):
                 shutil.copy2(py_file, scripts_dir / py_file.name)
             
-            # Copy app_base.py from templates if not in output dir
+            # Also copy any .py files from apps subdirectory to scripts dir
+            apps_src = output_path / "apps"
+            if apps_src.exists():
+                for app_file in apps_src.glob("*.py"):
+                    shutil.copy2(app_file, scripts_dir / app_file.name)
+            
+            # Copy app_base.py from templates if not already present
             app_base_dest = scripts_dir / "app_base.py"
             if not app_base_dest.exists():
                 # Try to find app_base.py in templates
@@ -539,12 +524,6 @@ class ProjectManager:
                 app_base_src = templates_dir / "app_base.py"
                 if app_base_src.exists():
                     shutil.copy2(app_base_src, app_base_dest)
-            
-            # Copy apps subdirectory
-            apps_src = output_path / "apps"
-            if apps_src.exists() and apps_dir:
-                for app_file in apps_src.glob("*.py"):
-                    shutil.copy2(app_file, apps_dir / app_file.name)
     
     def _save_topology(self, project: Project, network_model):
         """Save topology.json file."""
@@ -629,7 +608,7 @@ class ProjectManager:
     
     def import_ns3_script(self, project: Project, script_path: Path) -> Path:
         """
-        Import an ns-3 script into the project.
+        Import an ns-3 script into the project's scripts directory.
         
         Args:
             project: Target project
@@ -638,11 +617,11 @@ class ProjectManager:
         Returns:
             Path to imported copy
         """
-        if not project.imports_dir:
+        if not project.scripts_dir:
             raise ValueError("Project has no path")
         
-        project.imports_dir.mkdir(exist_ok=True)
-        dest_path = project.imports_dir / script_path.name
+        project.scripts_dir.mkdir(exist_ok=True)
+        dest_path = project.scripts_dir / script_path.name
         
         shutil.copy2(script_path, dest_path)
         

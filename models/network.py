@@ -299,8 +299,8 @@ class NodeModel:
     
     # Application script properties
     # Any node can have an associated application script that extends ApplicationBase
-    app_script: str = ""            # Python script content (stored inline)
-    app_script_path: str = ""       # Path to saved script file (if saved externally)
+    app_script: str = ""            # Python script content (stored inline in memory)
+    app_script_file: str = ""       # Relative path to script file in project (e.g., "scripts/host_1.py")
     
     @property
     def has_app_script(self) -> bool:

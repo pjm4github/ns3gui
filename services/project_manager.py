@@ -210,6 +210,15 @@ class ProjectManager:
                 ]
             }
         
+        # Application script reference
+        if node.has_app_script:
+            # Generate the script filename using same logic as save/load
+            safe_name = "".join(
+                c if c.isalnum() or c == '_' else '_' 
+                for c in node.name.lower()
+            )
+            node_data["app_script_file"] = f"scripts/{safe_name}.py"
+        
         # Type-specific properties
         if node.node_type == NodeType.HOST:
             node_data["host_config"] = {
@@ -451,6 +460,10 @@ class ProjectManager:
             node.stp_enabled = switch_config.get("stp_enabled", False)
             node.subnet_base = switch_config.get("subnet_base", "")
             node.subnet_mask = switch_config.get("subnet_mask", "255.255.255.0")
+        
+        # Store app script file reference (actual loading done separately)
+        # This allows the caller to load the script content from the file
+        node.app_script_file = data.get("app_script_file", "")
         
         return node
     

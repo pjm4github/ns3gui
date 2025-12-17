@@ -886,7 +886,30 @@ class MainWindow(QMainWindow):
             # Store script content in node model
             node.app_script = script_content
             self._update_node_app_indicator(node_id)
-            self.statusBar().showMessage(f"Saved application script for {node.name}", 3000)
+            
+            # Also save to project scripts directory if project is open
+            if self._current_project and self._current_project.scripts_dir:
+                try:
+                    scripts_dir = self._current_project.scripts_dir
+                    scripts_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Generate filename from node name (same format used in topology.json)
+                    safe_name = "".join(c if c.isalnum() or c == '_' else '_' for c in node.name.lower())
+                    script_filename = f"{safe_name}.py"
+                    script_path = scripts_dir / script_filename
+                    
+                    with open(script_path, 'w') as f:
+                        f.write(script_content)
+                    
+                    self.statusBar().showMessage(
+                        f"Saved {node.name} script to project: {script_filename}", 
+                        3000
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not save script to project: {e}")
+                    self.statusBar().showMessage(f"Saved script for {node.name}", 3000)
+            else:
+                self.statusBar().showMessage(f"Saved application script for {node.name}", 3000)
     
     def _on_subnet_applied(self, switch_id: str):
         """Handle subnet application to connected hosts."""
@@ -1249,6 +1272,7 @@ class MainWindow(QMainWindow):
             return
         
         import json
+        import shutil
         from datetime import datetime
         from models.project import SimulationRun
         
@@ -1266,10 +1290,37 @@ class MainWindow(QMainWindow):
                 console_log_path = f"results/{run_id}/console.log"
                 self.stats_panel.log_console("INFO", f"Console log saved to: {console_file}")
             
+            # Copy flows.json to run directory (snapshot of flows used for this run)
+            flows_file = self._current_project.flows_path
+            if flows_file and flows_file.exists():
+                shutil.copy2(flows_file, run_dir / "flows.json")
+                self.stats_panel.log_console("INFO", f"Flows saved to: {run_dir / 'flows.json'}")
+            elif self.sim_config.flows:
+                # Save current flows if flows.json doesn't exist yet
+                flows_data = {
+                    "flows": [
+                        {
+                            "id": f.id,
+                            "name": f.name,
+                            "source_node_id": f.source_node_id,
+                            "target_node_id": f.target_node_id,
+                            "protocol": f.protocol.value if hasattr(f.protocol, 'value') else str(f.protocol),
+                            "application": f.application.value if hasattr(f.application, 'value') else str(f.application),
+                            "start_time": f.start_time,
+                            "stop_time": f.stop_time,
+                            "data_rate": f.data_rate,
+                            "packet_size": f.packet_size,
+                        }
+                        for f in self.sim_config.flows
+                    ]
+                }
+                with open(run_dir / "flows.json", 'w') as f:
+                    json.dump(flows_data, f, indent=2)
+                self.stats_panel.log_console("INFO", f"Flows saved to: {run_dir / 'flows.json'}")
+            
             # Copy trace file if exists
             trace_file_path = ""
             if results.trace_file_path and Path(results.trace_file_path).exists():
-                import shutil
                 trace_dest = run_dir / "trace.xml"
                 shutil.copy2(results.trace_file_path, trace_dest)
                 trace_file_path = f"results/{run_id}/trace.xml"
@@ -1279,7 +1330,6 @@ class MainWindow(QMainWindow):
             if results.pcap_files:
                 pcap_dir = run_dir / "pcap"
                 pcap_dir.mkdir(exist_ok=True)
-                import shutil
                 for pcap_path in results.pcap_files:
                     if Path(pcap_path).exists():
                         shutil.copy2(pcap_path, pcap_dir / Path(pcap_path).name)
@@ -1299,15 +1349,21 @@ class MainWindow(QMainWindow):
                 "flow_stats": [
                     {
                         "flow_id": f.flow_id,
-                        "source": f.source,
-                        "destination": f.destination,
+                        "source_address": f.source_address,
+                        "destination_address": f.destination_address,
+                        "source_port": f.source_port,
+                        "destination_port": f.destination_port,
                         "protocol": f.protocol,
+                        "protocol_name": f.protocol_name,
                         "tx_packets": f.tx_packets,
                         "rx_packets": f.rx_packets,
+                        "tx_bytes": f.tx_bytes,
+                        "rx_bytes": f.rx_bytes,
                         "lost_packets": f.lost_packets,
+                        "packet_loss_percent": f.packet_loss_percent,
                         "throughput_mbps": f.throughput_mbps,
                         "mean_delay_ms": f.mean_delay_ms,
-                        "jitter_ms": f.jitter_ms
+                        "mean_jitter_ms": f.mean_jitter_ms
                     }
                     for f in results.flow_stats
                 ]
@@ -1625,7 +1681,15 @@ class MainWindow(QMainWindow):
     
     def _on_open_project(self):
         """Open an existing project."""
-        dialog = OpenProjectDialog(self.project_mgr, self)
+        try:
+            dialog = OpenProjectDialog(self.project_mgr, self)
+        except Exception as e:
+            print(f"Error creating dialog: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to open project dialog:\n{e}")
+            return
+        
         if dialog.exec() == QDialog.DialogCode.Accepted:
             project = dialog.get_project()
             if project:
@@ -1652,6 +1716,9 @@ class MainWindow(QMainWindow):
                         # Load flows from project and sync to sim_config
                         self._load_project_flows(project)
                         
+                        # Load app scripts from project scripts directory
+                        self._load_project_app_scripts(project)
+                        
                         flow_count = len(self.sim_config.flows)
                         msg = f"Opened project: {project.name} ({len(network.nodes)} nodes"
                         if flow_count > 0:
@@ -1672,6 +1739,58 @@ class MainWindow(QMainWindow):
                     traceback.print_exc()
                 
                 self._update_window_title()
+    
+    def _load_project_app_scripts(self, project):
+        """Load app scripts from project directory into nodes.
+        
+        Uses the app_script_file field from topology.json to locate script files.
+        Falls back to generating filename from node name if app_script_file not set.
+        """
+        if not project.path:
+            return
+        
+        project_dir = project.path
+        loaded_count = 0
+        
+        # Iterate through all nodes in the network model
+        for node in self.network_model.nodes.values():
+            try:
+                script_path = None
+                
+                # First try using app_script_file from topology
+                if node.app_script_file:
+                    script_path = project_dir / node.app_script_file
+                    if not script_path.exists():
+                        script_path = None
+                
+                # Fall back to generating filename from node name
+                if not script_path and project.scripts_dir and project.scripts_dir.exists():
+                    safe_name = "".join(
+                        c if c.isalnum() or c == '_' else '_' 
+                        for c in node.name.lower()
+                    )
+                    script_filename = f"{safe_name}.py"
+                    fallback_path = project.scripts_dir / script_filename
+                    if fallback_path.exists():
+                        script_path = fallback_path
+                
+                # Load script if found
+                if script_path and script_path.exists():
+                    with open(script_path, 'r') as f:
+                        script_content = f.read()
+                    
+                    # Load script into node
+                    node.app_script = script_content
+                    loaded_count += 1
+                    
+                    # Update visual indicator
+                    self._update_node_app_indicator(node.id)
+                    
+            except Exception as e:
+                print(f"Warning: Could not load script for {node.name}: {e}")
+        
+        if loaded_count > 0:
+            self.stats_panel.log_console("INFO", f"Loaded {loaded_count} app script(s) from project")
     
     def _load_project_flows(self, project):
         """Load flows from project into sim_config."""
