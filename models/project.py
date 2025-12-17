@@ -510,12 +510,6 @@ class ProjectManager:
             for py_file in output_path.glob("*.py"):
                 shutil.copy2(py_file, scripts_dir / py_file.name)
             
-            # Also copy any .py files from apps subdirectory to scripts dir
-            apps_src = output_path / "apps"
-            if apps_src.exists():
-                for app_file in apps_src.glob("*.py"):
-                    shutil.copy2(app_file, scripts_dir / app_file.name)
-            
             # Copy app_base.py from templates if not already present
             app_base_dest = scripts_dir / "app_base.py"
             if not app_base_dest.exists():

@@ -30,6 +30,7 @@ class SettingsDialog(QDialog):
     """
     
     settingsChanged = pyqtSignal()
+    workspaceChanged = pyqtSignal(str)  # Emits new workspace path
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -473,6 +474,9 @@ class SettingsDialog(QDialog):
         """Apply settings from form to settings manager."""
         s = self._settings.settings
         
+        # Track if workspace changed
+        old_workspace = s.paths.get_workspace_root()
+        
         # ns-3 tab
         s.ns3.path = self._ns3_path_edit.text().strip()
         if is_windows():
@@ -508,6 +512,11 @@ class SettingsDialog(QDialog):
         # Save
         self._settings.save()
         self.settingsChanged.emit()
+        
+        # Emit workspace change if path changed
+        new_workspace = s.paths.get_workspace_root()
+        if str(new_workspace) != str(old_workspace):
+            self.workspaceChanged.emit(str(new_workspace))
     
     def _on_accept(self):
         """Handle OK button."""

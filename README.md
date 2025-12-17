@@ -4,32 +4,83 @@ A visual interface for designing and simulating network topologies using the ns-
 
 ## Features
 
+### Project-Based Workflow
+- **Project management** - Organize simulations into self-contained projects
+- **Automatic saving** - Topology, flows, scripts, and results saved to project directory
+- **Run history** - Each simulation run is timestamped and preserved with its configuration
+- **Workspace configuration** - Customizable workspace location for all projects
+
 ### Topology Editor
 - **Visual node placement** - Host, Router, Switch with port-level configuration
 - **Port connection points** - Visual indicators on each node showing available ports
 - **Right-click and drag** between nodes/ports to create links
-- **Selection** - click to select nodes, links, or individual ports
-- **Zoom/Pan** - mouse wheel to zoom, middle-click to pan
+- **Radial Bezier curves** - Elegant curved connections between nodes
+- **Selection** - Click to select nodes, links, or individual ports
+- **Zoom/Pan** - Mouse wheel to zoom, middle-click to pan
+- **Double-click nodes** - Open the Socket Application Editor
 
 ### Property Panel
 - View and edit node properties (name, type, description)
 - Port-level configuration with L1/L2/L3 settings
 - Switch subnet configuration for automatic IP assignment
 - Link properties (channel type, data rate, delay)
-- **Routing table configuration** - manual static routes for hosts and routers
+- **Routing table configuration** - Manual static routes for hosts and routers
+
+### Custom Socket Applications
+- **Visual code editor** - Double-click any node to open the application editor
+- **Python-based** - Extend `ApplicationBase` class for custom traffic patterns
+- **Syntax highlighting** - Full Python editor with error checking
+- **"Py" indicator** - Nodes with custom applications show a visual badge
+- **Project persistence** - Application scripts saved to project's scripts directory
 
 ### ns-3 Integration
-- **Auto-detection** of ns-3 installation
-- **Script generation** - generates ns-3 Python scripts from topology
-- **Traffic flows** - configure UDP Echo traffic between nodes
-- **Simulation execution** - runs ns-3 as subprocess
+- **Auto-detection** of ns-3 installation (Linux native or WSL on Windows)
+- **Script generation** - Generates ns-3 Python scripts from topology
+- **Traffic flows** - Configure UDP/TCP traffic between nodes
+- **Simulation execution** - Runs ns-3 as subprocess with real-time output
 - **Results parsing** - FlowMonitor XML results displayed in Statistics panel
+- **Packet animation** - Visual playback of packet flow through the network
 
 ### Statistics Panel
 - Summary statistics (packets, throughput, latency)
 - Per-flow detailed statistics table
 - Routing table display
 - Console output with simulation logs
+
+## Project Directory Structure
+
+When you create a project, it organizes all simulation artifacts in a structured directory:
+
+```
+workspace/
+└── projects/
+    └── my_network/                    # Project folder (project name)
+        ├── project.json               # Project metadata and settings
+        ├── topology.json              # Network topology definition
+        ├── flows.json                 # Current traffic flow definitions
+        ├── scripts/                   # Generated simulation files
+        │   ├── gui_simulation.py      # Main simulation script
+        │   ├── app_base.py            # Application base class
+        │   └── *.py                   # Host application scripts (e.g., host_1.py)
+        └── results/                   # Simulation results
+            └── run_YYYYMMDD_HHMMSS/   # Timestamped run folder
+                ├── run_info.json      # Run metadata
+                ├── flows.json         # Flows used for this specific run
+                ├── console.log        # WSL/ns-3 console output
+                ├── trace.xml          # ns-3 trace file
+                ├── stats.json         # Parsed statistics
+                └── pcap/              # PCAP files (if enabled)
+```
+
+### File Descriptions
+
+| File | Description |
+|------|-------------|
+| `project.json` | Project metadata: name, description, creation date, run history |
+| `topology.json` | Network topology with nodes, links, ports, routing, and app script references |
+| `flows.json` | Traffic flow definitions (source, target, protocol, timing, etc.) |
+| `scripts/*.py` | Generated and custom Python scripts for ns-3 simulation |
+| `results/run_*/` | Timestamped folders containing each simulation run's outputs |
 
 ## Installation & Setup
 
@@ -53,11 +104,24 @@ python main.py
 
 ## Usage
 
+### Creating a Project
+
+1. **File → Project → New Project...** (Ctrl+Shift+N)
+2. Enter project name and optional description
+3. Project directory is created in the workspace
+
+### Opening a Project
+
+1. **File → Project → Open Project...** (Ctrl+Shift+O)
+2. Select from the list of existing projects
+3. Topology, flows, and application scripts are automatically loaded
+
 ### Creating a Topology
 
 1. **Add Nodes**: Click a node type in the left palette to add it
 2. **Position Nodes**: Drag nodes to arrange your topology
 3. **Create Links**: Right-click on a node/port and drag to another to connect
+4. **Save**: Press Ctrl+S to save to the current project
 
 ### Port Selection
 
@@ -65,6 +129,14 @@ python main.py
 - **Left-click** a port to select it (highlighted in Property Panel)
 - **Right-click** a port to start link creation from that specific port
 - Port colors: Gray=available, Green=connected, Red=disabled, Orange=selected
+
+### Creating Custom Applications
+
+1. **Double-click** any node to open the Socket Application Editor
+2. Write your Python code extending `ApplicationBase`
+3. Click **Save** or **Save & Close** to save
+4. The node will show a "Py" badge indicating it has a custom application
+5. Application is automatically saved to the project's `scripts/` directory
 
 ### Configuring Routing Tables
 
@@ -96,8 +168,8 @@ Route visualization colors:
 
 ### Running a Simulation
 
-1. **Configure ns-3 Path**: The GUI auto-detects ns-3, or configure via Simulation menu
-2. **Click Run**: Opens simulation configuration dialog
+1. **Configure ns-3 Path**: Edit → Settings → ns-3 tab (auto-detected if available)
+2. **Click Run** (F5): Opens simulation configuration dialog
 3. **Add Traffic Flows**: Define source/destination nodes and traffic parameters
 4. **Configure Options**: Set duration, enable FlowMonitor, etc.
 5. **Start Simulation**: ns-3 script is generated and executed
@@ -129,7 +201,35 @@ Flows can be saved with the topology file so they persist across sessions:
 - **Manual**: Click **"Load Saved"** to restore flows from the topology file
   - Choose to **replace** current flows or **add** to them
 
-## Project Structure
+### Configuring Settings
+
+Access all application settings via **Edit → Settings...** (Ctrl+,):
+
+| Tab | Settings |
+|-----|----------|
+| **General** | Theme, auto-save, default values |
+| **ns-3** | ns-3 installation path, WSL distribution |
+| **Workspace** | Workspace root directory for all projects |
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+Shift+N | New project |
+| Ctrl+Shift+O | Open project |
+| Ctrl+N | New topology |
+| Ctrl+S | Save |
+| Ctrl+O | Open file |
+| Ctrl+, | Settings |
+| F5 | Run simulation |
+| Delete/Backspace | Delete selected items |
+| Ctrl+A | Select all |
+| Ctrl+0 | Fit view to contents |
+| Ctrl+R | Reset view |
+| Ctrl+Shift+R | Toggle route visualization |
+| Escape | Clear selection / Cancel link drawing / Clear route highlights |
+
+## Source Code Structure
 
 ```
 ns3_gui_mvp/
@@ -137,37 +237,30 @@ ns3_gui_mvp/
 ├── requirements.txt        # Python dependencies
 ├── SETUP.md                # Detailed setup instructions
 ├── LICENSE                 # License file
+├── templates/
+│   └── app_base.py         # ApplicationBase class template
 ├── models/
 │   ├── network.py          # NetworkModel, NodeModel, LinkModel, PortConfig, RouteEntry
-│   └── simulation.py       # SimulationConfig, TrafficFlow, FlowStats
+│   ├── simulation.py       # SimulationConfig, TrafficFlow, FlowStats
+│   └── project.py          # Project, ProjectManager, ProjectMetadata
 ├── views/
-│   ├── main_window.py      # Main window with dialogs
+│   ├── main_window.py      # Main window with menus and dialogs
 │   ├── topology_canvas.py  # Graphics view with port indicators and route visualization
 │   ├── property_panel.py   # Property editor with port editors
 │   ├── routing_dialog.py   # Routing table configuration dialog
+│   ├── project_dialog.py   # Project management dialogs
+│   ├── settings_dialog.py  # Application settings dialog
+│   ├── socket_app_editor.py # Custom application code editor
 │   ├── node_palette.py     # Node type selection
 │   └── stats_panel.py      # Statistics with tabs (Summary/Flows/Routing/Console)
 └── services/
     ├── project_manager.py  # Save/load topology files
+    ├── settings_manager.py # Application settings persistence
     ├── ns3_generator.py    # Generate ns-3 Python scripts
     ├── simulation_runner.py # Execute ns-3 simulation
+    ├── trace_player.py     # Packet animation playback
     └── results_parser.py   # Parse FlowMonitor XML results
 ```
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| Delete/Backspace | Delete selected items |
-| Ctrl+A | Select all |
-| Ctrl+0 | Fit view to contents |
-| Ctrl+R | Reset view |
-| Ctrl+Shift+R | Toggle route visualization |
-| Ctrl+N | New topology |
-| Ctrl+S | Save |
-| Ctrl+O | Open |
-| F5 | Run simulation |
-| Escape | Clear selection / Cancel link drawing / Clear route highlights |
 
 ## Traffic Types
 
@@ -184,87 +277,7 @@ Coming soon (stubbed in generated code):
 
 The GUI supports custom Python-based traffic generators through the `ApplicationBase` class architecture. This allows you to create sophisticated traffic patterns, custom protocols, and data-driven simulations.
 
-### Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    gui_simulation.py                             │
-│  (generated by ns3_generator.py)                                │
-│                                                                  │
-│   from app_base import ApplicationBase                          │
-│   from my_custom_app import MyApp  # User's application         │
-│                                                                  │
-│   # Create and setup application                                │
-│   app = MyApp({                                                 │
-│       'node': nodes.Get(0),                                     │
-│       'target_address': '10.1.1.2',                             │
-│       'target_port': 9000,                                      │
-│       'protocol': 'UDP',                                        │
-│       'start_time': 1.0,                                        │
-│       'stop_time': 10.0,                                        │
-│       'send_interval': 0.5,                                     │
-│   })                                                            │
-│   app.setup()                                                   │
-│                                                                  │
-│   Simulator.Run()                                               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Files Uploaded at Runtime
-
-When running a simulation with custom applications, three files are uploaded to ns-3:
-
-1. **`app_base.py`** - The base class providing socket management
-2. **`{your_app}.py`** - Your custom application class
-3. **`gui_simulation.py`** - The generated simulation script
-
-### ApplicationBase Class
-
-The `ApplicationBase` class handles all ns-3 socket operations:
-
-#### Configuration Dictionary
-
-```python
-config = {
-    'node': ns.Node,           # NS-3 node object
-    'target_address': str,     # Destination IP (e.g., "10.1.1.2")
-    'target_port': int,        # Destination port (e.g., 9000)
-    'protocol': str,           # "UDP" or "TCP"
-    'start_time': float,       # When to start (seconds)
-    'stop_time': float,        # When to stop (seconds)
-    'send_interval': float,    # Time between packets (seconds)
-    'packet_size': int,        # Default packet size (bytes)
-    'app_name': str,           # Application identifier
-    'source_node_name': str,   # Source node name
-    'target_node_name': str,   # Target node name
-}
-```
-
-#### Key Methods
-
-| Method | Purpose |
-|--------|---------|
-| `__init__(config)` | Initialize with simulation parameters |
-| `setup()` | Create socket, schedule start/stop |
-| `create_payload()` | **OVERRIDE** - Generate packet content |
-| `on_packet_sent(seq, payload)` | **OVERRIDE** - Called after each send |
-| `on_packet_received(seq, payload)` | **OVERRIDE** - Called on receive |
-| `on_start()` | **OVERRIDE** - Called when app starts |
-| `on_stop()` | **OVERRIDE** - Called when app stops |
-| `on_setup()` | **OVERRIDE** - Called during initialization |
-| `send_now(payload)` | Send a packet immediately |
-| `log(message)` | Print timestamped log message |
-| `get_current_time()` | Get simulation time (seconds) |
-| `get_stats()` | Get packets/bytes sent/received |
-
-### Creating a Custom Application
-
-1. **Add a Socket Application node** to your topology
-2. **Connect it to a Host** node (creates the "py" attachment)
-3. **Double-click** the Application node to open the script editor
-4. **Write your application class** extending `ApplicationBase`
-
-#### Example: Simple Message Sender
+### Quick Example
 
 ```python
 from app_base import ApplicationBase
@@ -273,7 +286,7 @@ class MyCustomApp(ApplicationBase):
     """Custom traffic generator."""
     
     def on_setup(self):
-        """Initialize custom state."""
+        """Called once during setup."""
         self.message_id = 0
     
     def create_payload(self) -> bytes:
@@ -296,104 +309,23 @@ class MyCustomApp(ApplicationBase):
         self.log(f"Finished: {stats['packets_sent']} packets sent")
 ```
 
-#### Example: JSON Sensor Data
-
-```python
-from app_base import ApplicationBase
-import json
-import random
-
-class SensorDataApp(ApplicationBase):
-    """Simulated IoT sensor sending JSON data."""
-    
-    def on_setup(self):
-        self.sensor_id = self.config.get('sensor_id', 1)
-        self.temperature = 20.0
-    
-    def create_payload(self) -> bytes:
-        # Simulate temperature variation
-        self.temperature += random.uniform(-0.5, 0.5)
-        
-        data = {
-            'sensor_id': self.sensor_id,
-            'timestamp': self.get_current_time(),
-            'temperature': round(self.temperature, 2),
-            'humidity': round(random.uniform(40, 60), 1),
-            'seq': self.packets_sent + 1
-        }
-        
-        return json.dumps(data).encode('utf-8')
-    
-    def on_packet_sent(self, seq: int, payload: bytes):
-        self.log(f"Sensor reading: {payload.decode()}")
-```
-
-#### Example: Binary Protocol
-
-```python
-from app_base import ApplicationBase
-import struct
-
-class BinaryProtocolApp(ApplicationBase):
-    """Custom binary protocol implementation."""
-    
-    MSG_TYPES = {
-        'HELLO': 0x01,
-        'DATA': 0x02,
-        'ACK': 0x03,
-        'BYE': 0x04,
-    }
-    
-    def on_setup(self):
-        self.state = 'INIT'
-        self.seq_num = 0
-    
-    def create_payload(self) -> bytes:
-        self.seq_num += 1
-        
-        if self.packets_sent == 0:
-            msg_type = self.MSG_TYPES['HELLO']
-            data = b'HELLO'
-        elif self.get_current_time() >= self.stop_time - 1:
-            msg_type = self.MSG_TYPES['BYE']
-            data = b'GOODBYE'
-        else:
-            msg_type = self.MSG_TYPES['DATA']
-            data = f"Data packet {self.seq_num}".encode()
-        
-        # Header: type (1 byte) + seq (4 bytes) + length (2 bytes)
-        header = struct.pack('!BIH', msg_type, self.seq_num, len(data))
-        return header + data
-    
-    def on_packet_received(self, seq: int, payload: bytes):
-        if len(payload) >= 7:
-            msg_type, seq_num, length = struct.unpack('!BIH', payload[:7])
-            data = payload[7:7+length]
-            self.log(f"Received type={msg_type} seq={seq_num}: {data}")
-```
-
 ### Using Custom Applications in Simulation
 
-1. In **Simulation → Run Simulation**, add a Traffic Flow
-2. Select source and target nodes
-3. Check **"Use Socket Application Node"**
-4. Select your APPLICATION node from the dropdown
-5. Run the simulation
-
-The generated code will:
-- Import your custom class from the script file
-- Instantiate it with the proper configuration
-- Call `setup()` to initialize sockets and scheduling
-- Your `create_payload()` is called for each packet
-- Callbacks are invoked as packets are sent/received
+1. **Double-click** a node to open the Socket Application Editor
+2. Write your custom class extending `ApplicationBase`
+3. **Save** the application
+4. In **Simulation → Run Simulation**, add a Traffic Flow
+5. Select source and target nodes
+6. Check **"Use Socket Application Node"**
+7. Select your APPLICATION node from the dropdown
+8. Run the simulation
 
 ## File Formats
 
-### Topology Files (.json)
+### Topology Files (topology.json)
 
-JSON format containing nodes, links, routing configuration, and saved traffic flows.
+JSON format containing nodes, links, routing configuration, app script references, and saved traffic flows.
 
-#### Structure Overview
 ```json
 {
   "schema": {
@@ -410,98 +342,28 @@ JSON format containing nodes, links, routing configuration, and saved traffic fl
     "flows": [...]
   },
   "topology": {
-    "nodes": [...],
+    "nodes": [
+      {
+        "id": "abc123",
+        "name": "Host 1",
+        "type": "host",
+        "app_script_file": "scripts/host_1.py",
+        "routing": {
+          "mode": "manual",
+          "default_gateway": "10.1.1.2",
+          "routes": [...]
+        },
+        ...
+      }
+    ],
     "links": [...]
   }
 }
 ```
 
-#### Traffic Flow Structure
-Flows are stored in `simulation.flows`:
-```json
-{
-  "flows": [
-    {
-      "id": "abc12345",
-      "name": "flow_abc1",
-      "source_node_id": "host1_id",
-      "target_node_id": "host2_id",
-      "protocol": "udp",
-      "application": "echo",
-      "start_time": 1.0,
-      "stop_time": 9.0,
-      "data_rate": "1Mbps",
-      "packet_size": 1024,
-      "echo_packets": 10,
-      "echo_interval": 1.0
-    }
-  ]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique flow identifier |
-| `name` | string | Display name for the flow |
-| `source_node_id` | string | ID of the source node |
-| `target_node_id` | string | ID of the target node |
-| `protocol` | string | `"udp"` or `"tcp"` |
-| `application` | string | `"echo"`, `"onoff"`, `"bulk"`, or `"ping"` |
-| `start_time` | float | Simulation time to start (seconds) |
-| `stop_time` | float | Simulation time to stop (seconds) |
-| `data_rate` | string | Data rate (e.g., `"1Mbps"`, `"500Kbps"`) |
-| `packet_size` | int | Packet size in bytes |
-| `echo_packets` | int | Number of echo packets to send |
-| `echo_interval` | float | Interval between echo packets (seconds) |
-
-#### Routing Configuration Structure
-Per-node routing is stored in each node's `routing` field:
-```json
-{
-  "nodes": [
-    {
-      "id": "host1_id",
-      "type": "host",
-      "name": "host_1",
-      "routing": {
-        "mode": "manual",
-        "default_gateway": "10.1.1.2",
-        "routes": [
-          {
-            "id": "route123",
-            "destination": "10.1.2.0",
-            "prefix_length": 24,
-            "gateway": "10.1.1.2",
-            "interface": 0,
-            "metric": 1,
-            "route_type": "static",
-            "enabled": true
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `mode` | string | `"auto"` (GlobalRoutingHelper) or `"manual"` (static routes) |
-| `default_gateway` | string | Default gateway IP (shortcut for hosts) |
-| `routes[].destination` | string | Network address (e.g., `"10.1.2.0"`) |
-| `routes[].prefix_length` | int | CIDR prefix (e.g., `24` for /24) |
-| `routes[].gateway` | string | Next hop IP (`"0.0.0.0"` for direct/connected) |
-| `routes[].interface` | int | Interface index (0-based) |
-| `routes[].metric` | int | Route metric/priority |
-| `routes[].route_type` | string | `"static"`, `"connected"`, or `"default"` |
-| `routes[].enabled` | bool | Whether route is active |
-
-### Generated Scripts
-Python scripts compatible with ns-3's Python bindings, placed in `scratch/gui_simulation.py`
-
 ### Output Files
 - `flowmon-results.xml` - FlowMonitor statistics
-- `trace.tr` - ASCII trace (if enabled)
+- `trace.xml` - XML trace file
 - `*.pcap` - Packet captures (if enabled)
 
 ## License

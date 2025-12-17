@@ -30,8 +30,7 @@ from models import (
 from views import TopologyCanvas, PropertyPanel, NodePalette, StatsPanel, PlaybackControls
 from views.settings_dialog import SettingsDialog
 from views.project_dialog import (
-    NewProjectDialog, OpenProjectDialog, 
-    WorkspaceSettingsDialog, ProjectInfoDialog
+    NewProjectDialog, OpenProjectDialog, ProjectInfoDialog
 )
 from services import (
     ProjectManager, export_to_mininet,
@@ -428,13 +427,6 @@ class MainWindow(QMainWindow):
         project_info_action.setStatusTip("View current project details")
         project_info_action.triggered.connect(self._on_project_info)
         project_menu.addAction(project_info_action)
-        
-        project_menu.addSeparator()
-        
-        workspace_action = QAction("&Workspace Settings...", self)
-        workspace_action.setStatusTip("Configure workspace location")
-        workspace_action.triggered.connect(self._on_workspace_settings)
-        project_menu.addAction(workspace_action)
         
         file_menu.addSeparator()
         
@@ -1636,6 +1628,7 @@ class MainWindow(QMainWindow):
         """Show the settings dialog."""
         dialog = SettingsDialog(self)
         dialog.settingsChanged.connect(self._on_settings_changed)
+        dialog.workspaceChanged.connect(self._on_workspace_changed)
         dialog.exec()
     
     def _on_settings_changed(self):
@@ -1846,12 +1839,6 @@ class MainWindow(QMainWindow):
             return
         
         dialog = ProjectInfoDialog(self._current_project, self)
-        dialog.exec()
-    
-    def _on_workspace_settings(self):
-        """Configure workspace settings."""
-        dialog = WorkspaceSettingsDialog(self.settings_manager, self)
-        dialog.workspaceChanged.connect(self._on_workspace_changed)
         dialog.exec()
     
     def _on_workspace_changed(self, new_path: str):
