@@ -237,6 +237,7 @@ ns3_gui_mvp/
 ├── requirements.txt        # Python dependencies
 ├── SETUP.md                # Detailed setup instructions
 ├── LICENSE                 # License file
+├── run_tests.py            # Test runner script
 ├── templates/
 │   └── app_base.py         # ApplicationBase class template
 ├── models/
@@ -253,13 +254,37 @@ ns3_gui_mvp/
 │   ├── socket_app_editor.py # Custom application code editor
 │   ├── node_palette.py     # Node type selection
 │   └── stats_panel.py      # Statistics with tabs (Summary/Flows/Routing/Console)
-└── services/
-    ├── project_manager.py  # Save/load topology files
-    ├── settings_manager.py # Application settings persistence
-    ├── ns3_generator.py    # Generate ns-3 Python scripts
-    ├── simulation_runner.py # Execute ns-3 simulation
-    ├── trace_player.py     # Packet animation playback
-    └── results_parser.py   # Parse FlowMonitor XML results
+├── services/
+│   ├── project_manager.py  # Save/load topology files
+│   ├── settings_manager.py # Application settings persistence
+│   ├── ns3_generator.py    # Generate ns-3 Python scripts
+│   ├── simulation_runner.py # Execute ns-3 simulation
+│   ├── trace_player.py     # Packet animation playback
+│   └── results_parser.py   # Parse FlowMonitor XML results
+└── tests/                  # Test suite (see tests/README.md)
+    ├── unit/               # Unit tests
+    ├── integration/        # Integration tests
+    └── e2e/                # End-to-end tests
+```
+
+## Testing
+
+The application includes a comprehensive test suite. See **[tests/README.md](tests/README.md)** for detailed instructions.
+
+### Quick Start
+
+```bash
+# Install test dependencies
+pip install pytest pytest-cov
+
+# Run all tests
+python run_tests.py
+
+# Run unit tests only
+python run_tests.py unit
+
+# Run with coverage
+python run_tests.py --coverage
 ```
 
 ## Traffic Types
