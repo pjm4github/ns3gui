@@ -8,3 +8,5 @@ PyQt6>=6.4.0
 
 # For Phase 2 - Charts (optional, using basic widgets for MVP)
 # pyqtgraph>=0.13.0
+pytest
+pytest-cov
