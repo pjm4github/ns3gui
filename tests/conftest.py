@@ -65,8 +65,9 @@ def simple_network() -> NetworkModel:
         position=Position(300, 100)
     )
     
-    network.add_node(host1)
-    network.add_node(host2)
+    # Add nodes directly to the dict (bypassing add_node which creates new nodes)
+    network.nodes[host1.id] = host1
+    network.nodes[host2.id] = host2
     
     # Create link between them
     link = LinkModel(
@@ -76,7 +77,7 @@ def simple_network() -> NetworkModel:
         source_port_id=host1.ports[0].id if host1.ports else "",
         target_port_id=host2.ports[0].id if host2.ports else "",
     )
-    network.add_link(link)
+    network.links[link.id] = link
     
     return network
 
@@ -93,7 +94,7 @@ def star_network() -> NetworkModel:
         name="Switch 1",
         position=Position(200, 200)
     )
-    network.add_node(switch)
+    network.nodes[switch.id] = switch
     
     # Create 4 hosts around the switch
     positions = [(100, 100), (300, 100), (100, 300), (300, 300)]
@@ -104,7 +105,7 @@ def star_network() -> NetworkModel:
             name=f"Host {i}",
             position=Position(x, y)
         )
-        network.add_node(host)
+        network.nodes[host.id] = host
         
         # Link to switch
         link = LinkModel(
@@ -114,7 +115,7 @@ def star_network() -> NetworkModel:
             source_port_id=host.ports[0].id if host.ports else "",
             target_port_id=switch.ports[i-1].id if len(switch.ports) >= i else "",
         )
-        network.add_link(link)
+        network.links[link.id] = link
     
     return network
 
@@ -131,7 +132,7 @@ def routed_network() -> NetworkModel:
         name="Router 1",
         position=Position(200, 200)
     )
-    network.add_node(router)
+    network.nodes[router.id] = router
     
     # Create hosts on each side
     host1 = NodeModel(
@@ -146,8 +147,8 @@ def routed_network() -> NetworkModel:
         name="Host 2", 
         position=Position(350, 200)
     )
-    network.add_node(host1)
-    network.add_node(host2)
+    network.nodes[host1.id] = host1
+    network.nodes[host2.id] = host2
     
     # Create links
     link1 = LinkModel(
@@ -160,8 +161,8 @@ def routed_network() -> NetworkModel:
         source_node_id="router1",
         target_node_id="host2",
     )
-    network.add_link(link1)
-    network.add_link(link2)
+    network.links[link1.id] = link1
+    network.links[link2.id] = link2
     
     return network
 

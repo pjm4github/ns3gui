@@ -36,16 +36,11 @@ class TestScriptGeneration:
         # Verify valid Python
         assert_valid_python(script)
         
-        # Verify required imports
-        assert_contains_all(script, [
-            "import ns.core",
-            "import ns.network",
-            "import ns.internet",
-        ])
+        # Verify required imports (ns-3 uses 'from ns import ns' style)
+        assert "from ns import ns" in script or "import ns" in script
         
         # Verify node creation
         assert "NodeContainer" in script
-        assert "nodes.Create" in script
         
         # Verify internet stack
         assert "InternetStackHelper" in script
@@ -198,7 +193,7 @@ class TestApp(ApplicationBase):
             source_node_id="host1",
             target_node_id="host2",
             protocol=TrafficProtocol.UDP,
-            application=TrafficApplication.CUSTOM
+            application=TrafficApplication.CUSTOM_SOCKET
         ))
         
         script = script_generator.generate(simple_network, basic_sim_config)

@@ -207,7 +207,7 @@ def test_simple_p2p():
     json_str = exporter.to_json(topology)
     print(f"JSON length: {len(json_str)} chars")
     
-    return topology.parse_success
+    assert topology.parse_success, "Parsing should succeed"
 
 
 def test_csma_topology():
@@ -236,7 +236,7 @@ def test_csma_topology():
     if topology.warnings:
         print(f"\nWarnings: {topology.warnings}")
     
-    return topology.parse_success
+    assert topology.parse_success, "Parsing should succeed"
 
 
 def test_first_py_pattern():
@@ -280,32 +280,39 @@ def test_first_py_pattern():
     else:
         print("\n✗ Failed to parse first.py pattern correctly")
     
-    return success
+    assert success, "first.py pattern should parse correctly"
 
 
 def main():
-    """Run all tests."""
+    """Run all tests when executed directly."""
     print("NS-3 Python Parser Test Suite")
     print("=" * 60)
     
-    results = []
+    # Run tests - they will raise AssertionError on failure
+    try:
+        test_simple_p2p()
+        print("\n✓ Simple P2P: PASS")
+    except AssertionError as e:
+        print(f"\n✗ Simple P2P: FAIL - {e}")
+        return 1
     
-    results.append(("Simple P2P", test_simple_p2p()))
-    results.append(("CSMA Bus", test_csma_topology()))
-    results.append(("first.py Pattern", test_first_py_pattern()))
+    try:
+        test_csma_topology()
+        print("\n✓ CSMA Bus: PASS")
+    except AssertionError as e:
+        print(f"\n✗ CSMA Bus: FAIL - {e}")
+        return 1
+    
+    try:
+        test_first_py_pattern()
+        print("\n✓ first.py Pattern: PASS")
+    except AssertionError as e:
+        print(f"\n✗ first.py Pattern: FAIL - {e}")
+        return 1
     
     print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    
-    for name, passed in results:
-        status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"  {name}: {status}")
-    
-    all_passed = all(r[1] for r in results)
-    print(f"\nOverall: {'All tests passed!' if all_passed else 'Some tests failed'}")
-    
-    return 0 if all_passed else 1
+    print("All tests passed!")
+    return 0
 
 
 if __name__ == "__main__":

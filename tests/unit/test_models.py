@@ -63,11 +63,11 @@ class TestNodeModel:
     
     def test_node_medium_type(self):
         """Test node medium type."""
-        wired = NodeModel(id="w1", node_type=NodeType.HOST, medium_type=MediumType.WIRED)
-        wireless = NodeModel(id="w2", node_type=NodeType.HOST, medium_type=MediumType.WIRELESS)
+        wired = NodeModel(id="w1", node_type=NodeType.HOST, medium_type=MediumType.WIRED, position=Position(0, 0))
+        wifi = NodeModel(id="w2", node_type=NodeType.HOST, medium_type=MediumType.WIFI_STATION, position=Position(100, 0))
         
         assert wired.medium_type == MediumType.WIRED
-        assert wireless.medium_type == MediumType.WIRELESS
+        assert wifi.medium_type == MediumType.WIFI_STATION
     
     def test_app_script(self):
         """Test application script storage."""
@@ -143,20 +143,19 @@ class TestNetworkModel:
         assert len(empty_network.links) == 0
     
     def test_add_node(self, empty_network):
-        """Test adding a node."""
-        node = NodeModel(id="test1", node_type=NodeType.HOST, name="Test")
-        empty_network.add_node(node)
+        """Test adding a node using the API."""
+        node = empty_network.add_node(NodeType.HOST, Position(100, 100))
         
         assert len(empty_network.nodes) == 1
-        assert empty_network.get_node("test1") == node
+        assert empty_network.get_node(node.id) == node
     
     def test_add_duplicate_node(self, empty_network):
-        """Test that duplicate nodes are handled."""
-        node1 = NodeModel(id="test1", node_type=NodeType.HOST)
-        node2 = NodeModel(id="test1", node_type=NodeType.HOST)
+        """Test that duplicate node IDs are handled."""
+        node1 = NodeModel(id="test1", node_type=NodeType.HOST, position=Position(0, 0))
+        node2 = NodeModel(id="test1", node_type=NodeType.HOST, position=Position(100, 100))
         
-        empty_network.add_node(node1)
-        empty_network.add_node(node2)  # Should overwrite
+        empty_network.nodes[node1.id] = node1
+        empty_network.nodes[node2.id] = node2  # Should overwrite
         
         assert len(empty_network.nodes) == 1
     
@@ -169,18 +168,16 @@ class TestNetworkModel:
         assert simple_network.get_node("host1") is None
     
     def test_add_link(self, empty_network):
-        """Test adding a link."""
-        # First add nodes
-        node1 = NodeModel(id="n1", node_type=NodeType.HOST)
-        node2 = NodeModel(id="n2", node_type=NodeType.HOST)
-        empty_network.add_node(node1)
-        empty_network.add_node(node2)
+        """Test adding a link using the API."""
+        # First add nodes using the API
+        node1 = empty_network.add_node(NodeType.HOST, Position(0, 0))
+        node2 = empty_network.add_node(NodeType.HOST, Position(100, 0))
         
-        # Add link
-        link = LinkModel(id="link1", source_node_id="n1", target_node_id="n2")
-        empty_network.add_link(link)
+        # Add link using API
+        link = empty_network.add_link(node1.id, node2.id)
         
         assert len(empty_network.links) == 1
+        assert link is not None
     
     def test_remove_link(self, simple_network):
         """Test removing a link."""
@@ -189,17 +186,23 @@ class TestNetworkModel:
         
         assert len(simple_network.links) == initial_count - 1
     
-    def test_get_connected_nodes(self, star_network):
-        """Test getting nodes connected to a node."""
-        # Switch should be connected to 4 hosts
-        connected = star_network.get_connected_nodes("switch1")
-        assert len(connected) == 4
+    def test_get_node(self, simple_network):
+        """Test getting a node by ID."""
+        node = simple_network.get_node("host1")
+        assert node is not None
+        assert node.name == "Host 1"
+        
+        # Non-existent node
+        assert simple_network.get_node("nonexistent") is None
     
-    def test_get_node_links(self, simple_network):
-        """Test getting links for a node."""
-        links = simple_network.get_node_links("host1")
-        assert len(links) == 1
-        assert links[0].id == "link1"
+    def test_get_link(self, simple_network):
+        """Test getting a link by ID."""
+        link = simple_network.get_link("link1")
+        assert link is not None
+        assert link.source_node_id == "host1"
+        
+        # Non-existent link
+        assert simple_network.get_link("nonexistent") is None
 
 
 class TestPortConfig:

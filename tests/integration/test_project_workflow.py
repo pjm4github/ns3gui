@@ -45,11 +45,12 @@ class TestProjectCreation:
     
     def test_create_project_sanitizes_name(self, project_manager):
         """Test that project names are sanitized."""
-        project = project_manager.create_project("Test Project With Spaces!")
+        project = project_manager.create_project("Test@Project#Invalid$Chars")
         
-        # Name should be sanitized (no spaces/special chars in path)
-        assert " " not in project.path.name
-        assert "!" not in project.path.name
+        # Name should be sanitized (no special chars except ._- and space in path)
+        assert "@" not in project.path.name
+        assert "#" not in project.path.name
+        assert "$" not in project.path.name
     
     def test_create_duplicate_project_name(self, project_manager):
         """Test creating project with duplicate name."""
@@ -186,10 +187,10 @@ class TestRunHistory:
         project = project_manager.create_project("run_record")
         
         run = SimulationRun(
-            run_id="run_20250101_120000",
+            id="run_20250101_120000",
             timestamp=datetime.now().isoformat(),
             duration=10.0,
-            success=True
+            status="success"
         )
         
         project_manager.add_simulation_run(project, run)
@@ -197,7 +198,7 @@ class TestRunHistory:
         # Reload and verify
         loaded = project_manager.open_project("run_record")
         assert len(loaded.runs) == 1
-        assert loaded.runs[0].success == True
+        assert loaded.runs[0].status == "success"
     
     def test_multiple_runs(self, project_manager):
         """Test multiple simulation runs."""
@@ -205,10 +206,10 @@ class TestRunHistory:
         
         for i in range(3):
             run = SimulationRun(
-                run_id=f"run_{i}",
+                id=f"run_{i}",
                 timestamp=datetime.now().isoformat(),
                 duration=10.0,
-                success=True
+                status="success"
             )
             project_manager.add_simulation_run(project, run)
         
@@ -248,10 +249,10 @@ class TestProjectWorkflow:
         # 4. Add a run record
         run_dir = project.create_run_dir()
         run = SimulationRun(
-            run_id=run_dir.name,
+            id=run_dir.name,
             timestamp=datetime.now().isoformat(),
             duration=15.0,
-            success=True,
+            status="success",
             console_log_path=f"results/{run_dir.name}/console.log"
         )
         project_manager.add_simulation_run(project, run)
@@ -272,7 +273,7 @@ class TestProjectWorkflow:
         assert loaded_flows[0]["name"] == "Main Flow"
         
         assert len(loaded.runs) == 1
-        assert loaded.runs[0].success == True
+        assert loaded.runs[0].status == "success"
     
     def test_project_with_app_scripts(self, project_manager):
         """Test project with custom application scripts."""
@@ -280,7 +281,7 @@ class TestProjectWorkflow:
         
         # Create network with app script
         network = NetworkModel()
-        host = NodeModel(id="h1", node_type=NodeType.HOST, name="Host 1")
+        host = NodeModel(id="h1", node_type=NodeType.HOST, name="Host 1", position=Position(0, 0))
         host.app_script = """
 from app_base import ApplicationBase
 
@@ -288,7 +289,7 @@ class TestApp(ApplicationBase):
     def create_payload(self):
         return b"test data"
 """
-        network.add_node(host)
+        network.nodes[host.id] = host
         
         # Save project
         project_manager.save_project(project, network_model=network)

@@ -98,7 +98,7 @@ class TestTopologySerialization:
             position=Position(150, 250),
             medium_type=MediumType.WIRED
         )
-        network.add_node(node)
+        network.nodes[node.id] = node
         
         pm = ProjectManager()
         filepath = temp_dir / "props.json"
@@ -115,14 +115,14 @@ class TestTopologySerialization:
     def test_port_config_preserved(self, temp_dir):
         """Test that port configuration is preserved."""
         network = NetworkModel()
-        node = NodeModel(id="test1", node_type=NodeType.HOST)
+        node = NodeModel(id="test1", node_type=NodeType.HOST, position=Position(0, 0))
         
         # Configure a port
         if node.ports:
             node.ports[0].ip_address = "10.1.1.1"
             node.ports[0].netmask = "255.255.255.0"
         
-        network.add_node(node)
+        network.nodes[node.id] = node
         
         pm = ProjectManager()
         filepath = temp_dir / "ports.json"
@@ -137,7 +137,7 @@ class TestTopologySerialization:
     def test_routing_table_preserved(self, temp_dir):
         """Test that routing tables are preserved."""
         network = NetworkModel()
-        node = NodeModel(id="test1", node_type=NodeType.HOST)
+        node = NodeModel(id="test1", node_type=NodeType.HOST, position=Position(0, 0))
         node.routing_mode = RoutingMode.MANUAL
         node.routing_table.append(RouteEntry(
             id="r1",
@@ -146,7 +146,7 @@ class TestTopologySerialization:
             gateway="10.1.1.254",
             interface=0
         ))
-        network.add_node(node)
+        network.nodes[node.id] = node
         
         pm = ProjectManager()
         filepath = temp_dir / "routes.json"
@@ -162,10 +162,10 @@ class TestTopologySerialization:
         """Test that link properties are preserved."""
         network = NetworkModel()
         
-        node1 = NodeModel(id="n1", node_type=NodeType.HOST)
-        node2 = NodeModel(id="n2", node_type=NodeType.HOST)
-        network.add_node(node1)
-        network.add_node(node2)
+        node1 = NodeModel(id="n1", node_type=NodeType.HOST, position=Position(0, 0))
+        node2 = NodeModel(id="n2", node_type=NodeType.HOST, position=Position(100, 0))
+        network.nodes[node1.id] = node1
+        network.nodes[node2.id] = node2
         
         link = LinkModel(
             id="link1",
@@ -174,7 +174,7 @@ class TestTopologySerialization:
             data_rate="100Mbps",
             delay="5ms"
         )
-        network.add_link(link)
+        network.links[link.id] = link
         
         pm = ProjectManager()
         filepath = temp_dir / "links.json"
@@ -188,9 +188,9 @@ class TestTopologySerialization:
     def test_app_script_file_preserved(self, temp_dir):
         """Test that app_script_file reference is preserved."""
         network = NetworkModel()
-        node = NodeModel(id="test1", node_type=NodeType.HOST, name="Host 1")
+        node = NodeModel(id="test1", node_type=NodeType.HOST, name="Host 1", position=Position(0, 0))
         node.app_script = "print('test')"  # Has script
-        network.add_node(node)
+        network.nodes[node.id] = node
         
         pm = ProjectManager()
         filepath = temp_dir / "app.json"
