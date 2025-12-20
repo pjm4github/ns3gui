@@ -9,7 +9,7 @@ Extends NS3ScriptGenerator to support:
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Set, Tuple, List, Any
+from typing import Optional, Dict, Set, Tuple, List, Any, Union
 
 from models import (
     NetworkModel, NodeModel, LinkModel, NodeType, ChannelType,
@@ -610,6 +610,9 @@ Simulation Duration: {sim_config.duration} seconds
             "    # Create Applications (SCADA Traffic)",
             "    # ============================================",
             "",
+            "    # List for receiver poll functions (not used with standard ns-3 apps)",
+            "    _receiver_poll_functions = []",
+            "",
         ]
         
         if not sim_config.flows:
@@ -699,6 +702,54 @@ Simulation Duration: {sim_config.duration} seconds
         lines.append("")
         return lines
     
+    def _find_target_interface(
+        self,
+        flow: Union[GridTrafficFlow, TrafficFlow],
+        network: NetworkModel,
+    ) -> Tuple[Optional[int], int]:
+        """
+        Find the correct interface container and index for a flow's target node.
+        
+        Returns:
+            Tuple of (link_index, interface_index) or (None, 0) if not found.
+            link_index: Which interfaces{N} container to use
+            interface_index: Which address in that container (0 or 1)
+        """
+        from models.network import NodeType
+        
+        target_link_idx = None
+        interface_idx = 0
+        
+        for idx, (link_id, link) in enumerate(network.links.items()):
+            link_source = network.nodes.get(link.source_node_id)
+            link_target = network.nodes.get(link.target_node_id)
+            
+            # Check if target node is the "target" side of this link
+            if link.target_node_id == flow.target_node_id:
+                source_is_switch = link_source and link_source.node_type in (NodeType.SWITCH,)
+                if source_is_switch:
+                    # switch -> target: IP at index 0
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    # host -> target: IP at index 1
+                    target_link_idx = idx
+                    interface_idx = 1
+                break
+            # Check if target node is the "source" side of this link
+            elif link.source_node_id == flow.target_node_id:
+                target_is_switch = link_source and link_source.node_type in (NodeType.SWITCH,)
+                if target_is_switch:
+                    target_link_idx = idx
+                    interface_idx = 0
+                else:
+                    # target -> host: IP at index 0
+                    target_link_idx = idx
+                    interface_idx = 0
+                break
+        
+        return target_link_idx, interface_idx
+
     def _generate_polling_application(
         self,
         flow_idx: int,
@@ -719,18 +770,26 @@ Simulation Duration: {sim_config.duration} seconds
             request_size = flow.dnp3_config.estimated_request_bytes
             response_size = flow.dnp3_config.estimated_response_bytes
         
+        # Find the correct interface for the target
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            lines.append(f"    # Flow {flow_idx}: ERROR - Cannot find interface for target node")
+            return lines
+        
         lines.extend([
             f"    # SCADA Polling: interval={interval_s}s, request={request_size}B, response={response_size}B",
             "",
             f"    # Server (RTU/IED) on target node",
-            f"    server_addr_{flow_idx} = interfaces0.GetAddress({target_idx})  # Adjust interface",
             f"    echo_server_{flow_idx} = ns.UdpEchoServerHelper({flow.port})",
             f"    server_apps_{flow_idx} = echo_server_{flow_idx}.Install(nodes.Get({target_idx}))",
             f"    server_apps_{flow_idx}.Start(ns.Seconds(0.0))",
             f"    server_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
             "",
             f"    # Client (Master/CC) on source node",
-            f"    echo_client_{flow_idx} = ns.UdpEchoClientHelper(server_addr_{flow_idx}, {flow.port})",
+            f"    target_addr_{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    remote_addr_{flow_idx} = ns.InetSocketAddress(target_addr_{flow_idx}, {flow.port})",
+            f"    echo_client_{flow_idx} = ns.UdpEchoClientHelper(remote_addr_{flow_idx}.ConvertTo())",
             f"    echo_client_{flow_idx}.SetAttribute('MaxPackets', ns.UintegerValue({int((flow.stop_time - flow.start_time) / interval_s)}))",
             f"    echo_client_{flow_idx}.SetAttribute('Interval', ns.TimeValue(ns.Seconds({interval_s})))",
             f"    echo_client_{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({request_size}))",
@@ -799,6 +858,13 @@ Simulation Duration: {sim_config.duration} seconds
         # Model as a single echo exchange
         packet_size = 64  # Control message size
         
+        # Find the correct interface for the target
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            lines.append(f"    # Flow {flow_idx}: ERROR - Cannot find interface for target node")
+            return lines
+        
         lines.extend([
             f"    # Control command traffic (Select-Before-Operate)",
             f"    # Note: Real control is event-driven, not periodic",
@@ -808,9 +874,9 @@ Simulation Duration: {sim_config.duration} seconds
             f"    ctrl_srv_apps_{flow_idx}.Start(ns.Seconds(0.0))",
             f"    ctrl_srv_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
             "",
-            f"    ctrl_client_{flow_idx} = ns.UdpEchoClientHelper(",
-            f"        interfaces0.GetAddress({target_idx}), {flow.port}",
-            f"    )",
+            f"    ctrl_target_{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    ctrl_addr_{flow_idx} = ns.InetSocketAddress(ctrl_target_{flow_idx}, {flow.port})",
+            f"    ctrl_client_{flow_idx} = ns.UdpEchoClientHelper(ctrl_addr_{flow_idx}.ConvertTo())",
             f"    ctrl_client_{flow_idx}.SetAttribute('MaxPackets', ns.UintegerValue(2))  # SELECT + OPERATE",
             f"    ctrl_client_{flow_idx}.SetAttribute('Interval', ns.TimeValue(ns.Seconds(0.5)))",
             f"    ctrl_client_{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({packet_size}))",
@@ -830,6 +896,12 @@ Simulation Duration: {sim_config.duration} seconds
         network: NetworkModel,
     ) -> List[str]:
         """Generate simple UDP echo application."""
+        # Find the correct interface for the target
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: ERROR - Cannot find interface for target node"]
+        
         lines = [
             f"    # UDP Echo application",
             f"    echo_server_{flow_idx} = ns.UdpEchoServerHelper({flow.port})",
@@ -837,9 +909,9 @@ Simulation Duration: {sim_config.duration} seconds
             f"    srv_apps_{flow_idx}.Start(ns.Seconds(0.0))",
             f"    srv_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
             "",
-            f"    echo_client_{flow_idx} = ns.UdpEchoClientHelper(",
-            f"        interfaces0.GetAddress({target_idx}), {flow.port}",
-            f"    )",
+            f"    target_addr_{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
+            f"    echo_addr_{flow_idx} = ns.InetSocketAddress(target_addr_{flow_idx}, {flow.port})",
+            f"    echo_client_{flow_idx} = ns.UdpEchoClientHelper(echo_addr_{flow_idx}.ConvertTo())",
             f"    echo_client_{flow_idx}.SetAttribute('MaxPackets', ns.UintegerValue({flow.echo_packets}))",
             f"    echo_client_{flow_idx}.SetAttribute('Interval', ns.TimeValue(ns.Seconds({flow.echo_interval})))",
             f"    echo_client_{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({flow.packet_size}))",
@@ -858,6 +930,12 @@ Simulation Duration: {sim_config.duration} seconds
         network: NetworkModel,
     ) -> List[str]:
         """Generate simple OnOff application."""
+        # Find the correct interface for the target
+        target_link_idx, interface_idx = self._find_target_interface(flow, network)
+        
+        if target_link_idx is None:
+            return [f"    # Flow {flow_idx}: ERROR - Cannot find interface for target node"]
+        
         lines = [
             f"    # OnOff application",
             f"    sink_{flow_idx} = ns.PacketSinkHelper(",
@@ -868,9 +946,10 @@ Simulation Duration: {sim_config.duration} seconds
             f"    sink_apps_{flow_idx}.Start(ns.Seconds(0.0))",
             f"    sink_apps_{flow_idx}.Stop(ns.Seconds({flow.stop_time}))",
             "",
+            f"    target_addr_{flow_idx} = interfaces{target_link_idx}.GetAddress({interface_idx})",
             f"    onoff_{flow_idx} = ns.OnOffHelper(",
             f"        'ns3::UdpSocketFactory',",
-            f"        ns.InetSocketAddress(interfaces0.GetAddress({target_idx}), {flow.port})",
+            f"        ns.InetSocketAddress(target_addr_{flow_idx}, {flow.port})",
             f"    )",
             f"    onoff_{flow_idx}.SetAttribute('DataRate', ns.StringValue('{flow.data_rate}'))",
             f"    onoff_{flow_idx}.SetAttribute('PacketSize', ns.UintegerValue({flow.packet_size}))",
@@ -882,184 +961,56 @@ Simulation Duration: {sim_config.duration} seconds
     
     def _generate_failure_injection(self) -> str:
         """
-        Generate failure injection code using Simulator::Schedule.
+        Generate failure injection code.
         
-        Supports:
-        - LINK_DOWN/LINK_UP: Disable/enable network devices
-        - NODE_POWER_LOSS/NODE_REBOOT: Disable all node interfaces
-        - LINK_DEGRADED: Modify link error rate
-        - DOS_FLOOD: Inject high-volume traffic
+        NOTE: ns-3's Python bindings (cppyy) do not support scheduling Python
+        callbacks via Simulator::Schedule. Failure injection using callbacks
+        is therefore not available in Python-based ns-3 scripts.
+        
+        For failure scenarios, consider:
+        1. Using C++ ns-3 scripts with proper callback support
+        2. Running multiple simulations with different static configurations
+        3. Using ns-3's built-in error models with time-based parameters
         """
         if not self._failure_scenario or not self._failure_scenario.events:
             return ""
         
+        # Generate informational comment about the failure scenario
+        # but don't generate the actual callback code since it won't work
         lines = [
             "    # ============================================",
-            "    # Failure Injection Scenario",
+            "    # Failure Injection Scenario (INFORMATIONAL)",
             "    # ============================================",
             f"    # Scenario: {self._failure_scenario.name}",
             f"    # Events: {self._failure_scenario.event_count}",
-            "",
-            "    # Failure injection callback functions",
-            "",
+            "    #",
+            "    # NOTE: Dynamic failure injection via Simulator.Schedule() is not",
+            "    # supported in ns-3 Python bindings (cppyy cannot pass Python callbacks).",
+            "    #",
+            "    # Planned events:",
         ]
         
-        # Generate callback functions for each event
         for event_idx, event in enumerate(self._failure_scenario.events):
-            lines.extend(self._generate_failure_event_callbacks(event_idx, event))
+            event_type = event.event_type.name
+            trigger_time = event.trigger_time_s
+            target_id = event.target_id
+            
+            lines.append(f"    #   - Event {event_idx}: {event_type} on {target_id} at t={trigger_time}s")
+            
+            if event.has_duration:
+                recovery_time = event.effective_recovery_time
+                lines.append(f"    #     Recovery at t={recovery_time}s")
         
-        # Schedule all events
         lines.extend([
-            "    # Schedule failure events",
+            "    #",
+            "    # To implement failure injection, use one of these approaches:",
+            "    #   1. Write a C++ ns-3 script with MakeCallback",
+            "    #   2. Run separate simulations for pre/during/post failure",
+            "    #   3. Use static error rate configuration",
+            "",
+            f"    print('Failure scenario: {self._failure_scenario.name} ({self._failure_scenario.event_count} events)')",
+            "    print('Note: Dynamic failure injection not supported in Python bindings')",
             "",
         ])
         
-        for event_idx, event in enumerate(self._failure_scenario.events):
-            trigger_time = event.trigger_time_s
-            
-            lines.append(f"    # Event {event_idx}: {event.event_type.name} at t={trigger_time}s")
-            lines.append(
-                f"    ns.Simulator.Schedule("
-                f"ns.Seconds({trigger_time}), failure_event_{event_idx}_trigger)"
-            )
-            
-            # Schedule recovery if event has duration
-            if event.has_duration:
-                recovery_time = event.effective_recovery_time
-                lines.append(
-                    f"    ns.Simulator.Schedule("
-                    f"ns.Seconds({recovery_time}), failure_event_{event_idx}_recover)"
-                )
-            
-            lines.append("")
-        
         return "\n".join(lines)
-    
-    def _generate_failure_event_callbacks(
-        self,
-        event_idx: int,
-        event: FailureEvent,
-    ) -> List[str]:
-        """Generate callback functions for a failure event."""
-        lines = []
-        
-        event_type = event.event_type
-        target_id = event.target_id
-        
-        # Get the device/node index for the target
-        device_idx = self._link_device_map.get(target_id)
-        node_idx = self._node_index_map.get(target_id)
-        
-        if event_type == FailureEventType.LINK_DOWN:
-            if device_idx is not None:
-                lines.extend([
-                    f"    def failure_event_{event_idx}_trigger():",
-                    f"        '''Bring down link {target_id}'''",
-                    f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] FAILURE: Link {target_id} DOWN')",
-                    f"        # Disable both ends of the link",
-                    f"        devices{device_idx}.Get(0).SetAttribute('ReceiveEnable', ns.BooleanValue(False))",
-                    f"        devices{device_idx}.Get(1).SetAttribute('ReceiveEnable', ns.BooleanValue(False))",
-                    "",
-                ])
-                
-                if event.has_duration:
-                    lines.extend([
-                        f"    def failure_event_{event_idx}_recover():",
-                        f"        '''Bring up link {target_id}'''",
-                        f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] RECOVERY: Link {target_id} UP')",
-                        f"        devices{device_idx}.Get(0).SetAttribute('ReceiveEnable', ns.BooleanValue(True))",
-                        f"        devices{device_idx}.Get(1).SetAttribute('ReceiveEnable', ns.BooleanValue(True))",
-                        "",
-                    ])
-        
-        elif event_type == FailureEventType.LINK_UP:
-            if device_idx is not None:
-                lines.extend([
-                    f"    def failure_event_{event_idx}_trigger():",
-                    f"        '''Bring up link {target_id}'''",
-                    f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] EVENT: Link {target_id} UP')",
-                    f"        devices{device_idx}.Get(0).SetAttribute('ReceiveEnable', ns.BooleanValue(True))",
-                    f"        devices{device_idx}.Get(1).SetAttribute('ReceiveEnable', ns.BooleanValue(True))",
-                    "",
-                ])
-        
-        elif event_type == FailureEventType.NODE_POWER_LOSS:
-            if node_idx is not None:
-                lines.extend([
-                    f"    def failure_event_{event_idx}_trigger():",
-                    f"        '''Simulate power loss on node {target_id}'''",
-                    f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] FAILURE: Node {target_id} POWER LOSS')",
-                    f"        node = nodes.Get({node_idx})",
-                    f"        # Disable all network devices on this node",
-                    f"        for i in range(node.GetNDevices()):",
-                    f"            dev = node.GetDevice(i)",
-                    f"            if hasattr(dev, 'SetReceiveEnable'):",
-                    f"                dev.SetAttribute('ReceiveEnable', ns.BooleanValue(False))",
-                    "",
-                ])
-                
-                if event.has_duration:
-                    lines.extend([
-                        f"    def failure_event_{event_idx}_recover():",
-                        f"        '''Restore power on node {target_id}'''",
-                        f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] RECOVERY: Node {target_id} POWER RESTORED')",
-                        f"        node = nodes.Get({node_idx})",
-                        f"        for i in range(node.GetNDevices()):",
-                        f"            dev = node.GetDevice(i)",
-                        f"            if hasattr(dev, 'SetReceiveEnable'):",
-                        f"                dev.SetAttribute('ReceiveEnable', ns.BooleanValue(True))",
-                        "",
-                    ])
-        
-        elif event_type == FailureEventType.LINK_DEGRADED:
-            if device_idx is not None:
-                # Increase error rate
-                degraded_ber = 1e-3  # 0.1% BER for degraded link
-                if event.parameters and event.parameters.degradation_percent:
-                    degraded_ber = event.parameters.degradation_percent / 100.0
-                
-                lines.extend([
-                    f"    def failure_event_{event_idx}_trigger():",
-                    f"        '''Degrade link {target_id} with increased error rate'''",
-                    f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] DEGRADATION: Link {target_id} BER={degraded_ber}')",
-                    f"        error_model = ns.CreateObject[ns.RateErrorModel]()",
-                    f"        error_model.SetAttribute('ErrorRate', ns.DoubleValue({degraded_ber}))",
-                    f"        devices{device_idx}.Get(0).SetAttribute('ReceiveErrorModel', ns.PointerValue(error_model))",
-                    f"        devices{device_idx}.Get(1).SetAttribute('ReceiveErrorModel', ns.PointerValue(error_model))",
-                    "",
-                ])
-                
-                if event.has_duration:
-                    lines.extend([
-                        f"    def failure_event_{event_idx}_recover():",
-                        f"        '''Restore normal link quality for {target_id}'''",
-                        f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] RECOVERY: Link {target_id} normal')",
-                        f"        # Remove error model (set to null or very low rate)",
-                        f"        error_model = ns.CreateObject[ns.RateErrorModel]()",
-                        f"        error_model.SetAttribute('ErrorRate', ns.DoubleValue(0.0))",
-                        f"        devices{device_idx}.Get(0).SetAttribute('ReceiveErrorModel', ns.PointerValue(error_model))",
-                        f"        devices{device_idx}.Get(1).SetAttribute('ReceiveErrorModel', ns.PointerValue(error_model))",
-                        "",
-                    ])
-        
-        else:
-            # Generic stub for unhandled event types
-            lines.extend([
-                f"    def failure_event_{event_idx}_trigger():",
-                f"        '''Event: {event_type.name} on {target_id}'''",
-                f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] EVENT: {event_type.name} on {target_id}')",
-                f"        # TODO: Implement {event_type.name} handling",
-                f"        pass",
-                "",
-            ])
-            
-            if event.has_duration:
-                lines.extend([
-                    f"    def failure_event_{event_idx}_recover():",
-                    f"        '''Recovery from {event_type.name} on {target_id}'''",
-                    f"        print(f'[{{ns.Simulator.Now().GetSeconds():.3f}}s] RECOVERY: {event_type.name} on {target_id}')",
-                    f"        pass",
-                    "",
-                ])
-        
-        return lines
