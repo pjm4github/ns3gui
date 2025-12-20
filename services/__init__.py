@@ -2,6 +2,7 @@
 
 from .project_manager import ProjectManager, export_to_mininet
 from .ns3_generator import NS3ScriptGenerator, generate_ns3_script
+from .grid_ns3_generator import GridNS3Generator
 from .simulation_runner import (
     NS3Detector,
     SimulationRunner,
@@ -46,8 +47,10 @@ from .topology_converter import (
 __all__ = [
     "ProjectManager",
     "export_to_mininet",
+    # NS-3 Script Generation
     "NS3ScriptGenerator",
     "generate_ns3_script",
+    "GridNS3Generator",  # Grid-specific generator
     "NS3Detector",
     "SimulationRunner",
     "NS3SimulationManager",

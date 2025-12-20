@@ -19,6 +19,36 @@ from services.project_manager import ProjectManager as LegacyProjectManager
 from services.ns3_generator import NS3ScriptGenerator
 
 
+# ============== Pytest Configuration ==============
+
+def pytest_addoption(parser):
+    """Add custom command-line options."""
+    parser.addoption(
+        "--run-slow",
+        action="store_true",
+        default=False,
+        help="Run slow tests (e2e tests that require ns-3)"
+    )
+
+
+def pytest_configure(config):
+    """Configure custom markers."""
+    config.addinivalue_line("markers", "slow: marks tests as slow (require --run-slow to run)")
+    config.addinivalue_line("markers", "e2e: marks tests as end-to-end (require ns-3 installation)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip slow tests unless --run-slow is provided."""
+    if config.getoption("--run-slow"):
+        # --run-slow given: don't skip slow tests
+        return
+    
+    skip_slow = pytest.mark.skip(reason="Need --run-slow option to run")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)
+
+
 # ============== Temporary Directory Fixtures ==============
 
 @pytest.fixture

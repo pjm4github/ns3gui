@@ -8,7 +8,15 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
 import uuid
-from PyQt6.QtCore import QObject, pyqtSignal
+
+# Try to import PyQt6, but make it optional for testing
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+    _PYQT_AVAILABLE = True
+except ImportError:
+    _PYQT_AVAILABLE = False
+    QObject = object  # Fallback for inheritance
+    pyqtSignal = lambda *args: None  # Dummy signal
 
 
 class SimulationStatus(Enum):

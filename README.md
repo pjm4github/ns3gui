@@ -295,3 +295,204 @@ python run_tests.py --cov     # With coverage report
 ## License
 
 MIT
+---
+
+## V2 Grid Extensions
+
+### Grid Infrastructure Support
+
+V2 adds comprehensive support for modeling electric grid SCADA/EMS communication networks.
+
+#### Grid Node Types
+| Type | Description | Base ns-3 Type |
+|------|-------------|----------------|
+| Control Center | SCADA/EMS master station | HOST |
+| RTU | Remote Terminal Unit | HOST |
+| IED | Intelligent Electronic Device | HOST |
+| Relay | Protective Relay | HOST |
+| Meter | Smart Meter | HOST |
+| Data Concentrator | Data aggregation point | HOST |
+| Gateway | Protocol converter/firewall | ROUTER |
+| Cellular Gateway | Cellular modem gateway | ROUTER |
+
+#### Grid Link Types
+| Type | Data Rate | Latency | ns-3 Helper |
+|------|-----------|---------|-------------|
+| Fiber | 1 Gbps | ~0.1ms | PointToPointHelper |
+| Microwave | 100 Mbps | ~1ms | PointToPointHelper |
+| Licensed Radio | 9.6 kbps | ~50ms | PointToPointHelper |
+| Cellular LTE | 50 Mbps | ~30ms | PointToPointHelper* |
+| Satellite GEO | 5 Mbps | ~540ms RTT | PointToPointHelper |
+| Satellite LEO | 50 Mbps | ~40ms RTT | PointToPointHelper |
+| Ethernet LAN | 1 Gbps | ~0.1ms | CsmaHelper |
+
+*Full LTE requires LteHelper with EPC; simplified P2P model used by default.
+
+#### SCADA Traffic Classes
+- **SCADA Integrity Poll** - Full data scan (60s interval)
+- **SCADA Exception Poll** - Change-based polling (4s interval)
+- **GOOSE** - IEC 61850 protection messages (<4ms)
+- **Control Select/Operate** - SBO command sequence
+- **Sampled Values** - Continuous waveform data
+- **Telemetry** - Analog/status updates
+- **Heartbeat** - Supervision messages (30s)
+- **Time Sync** - PTP/NTP synchronization
+
+#### Failure Injection Types
+- **Link Down/Up** - Complete link failure/recovery
+- **Link Degraded** - Increased BER/packet loss
+- **Link Flapping** - Intermittent connectivity
+- **Node Power Loss** - All interfaces disabled
+- **Node Reboot** - Temporary outage with recovery
+- **Network Partition** - Segment isolation
+- **DoS Attack** - Traffic flooding
+- **Cascading Failure** - Sequential failures with delays
+
+### Quick Start (V2 Grid Features)
+
+```python
+from models import (
+    NetworkModel, SimulationConfig,
+    GridNodeModel, GridNodeType,
+    GridLinkModel, GridLinkType,
+    GridTrafficFlow, GridTrafficClass,
+    create_single_link_failure,
+    PollingSchedule,
+)
+from services.grid_ns3_generator import GridNS3Generator
+
+# Create network
+network = NetworkModel()
+
+# Create control center and RTUs (direct instantiation - no factories)
+cc = GridNodeModel(grid_type=GridNodeType.CONTROL_CENTER, name="EMS")
+rtu1 = GridNodeModel(grid_type=GridNodeType.RTU, name="RTU_Sub1", substation_id="sub1")
+rtu2 = GridNodeModel(grid_type=GridNodeType.RTU, name="RTU_Sub2", substation_id="sub2")
+
+network.nodes[cc.id] = cc
+network.nodes[rtu1.id] = rtu1
+network.nodes[rtu2.id] = rtu2
+
+# Create links - fiber primary, satellite backup
+fiber = GridLinkModel(
+    grid_link_type=GridLinkType.FIBER,
+    source_node_id=cc.id,
+    target_node_id=rtu1.id,
+    distance_km=50.0,
+)
+satellite = GridLinkModel(
+    grid_link_type=GridLinkType.SATELLITE_GEO,
+    source_node_id=cc.id,
+    target_node_id=rtu2.id,
+)
+
+network.links[fiber.id] = fiber
+network.links[satellite.id] = satellite
+
+# Create SCADA polling traffic
+poll1 = GridTrafficFlow(
+    traffic_class=GridTrafficClass.SCADA_EXCEPTION_POLL,
+    source_node_id=cc.id,
+    target_node_id=rtu1.id,
+)
+poll2 = GridTrafficFlow(
+    traffic_class=GridTrafficClass.SCADA_EXCEPTION_POLL,
+    source_node_id=cc.id,
+    target_node_id=rtu2.id,
+)
+
+sim_config = SimulationConfig(duration=120.0, flows=[poll1, poll2])
+
+# Create failure scenario - fiber fails at t=30s for 15s
+failure = create_single_link_failure(
+    link_id=fiber.id,
+    trigger_time_s=30.0,
+    duration_s=15.0,
+)
+
+# Generate ns-3 script
+generator = GridNS3Generator()
+script = generator.generate(network, sim_config, failure_scenario=failure)
+
+# Save to file
+with open("grid_simulation.py", "w") as f:
+    f.write(script)
+```
+
+### Generated Script Features
+
+The `GridNS3Generator` produces ns-3 Python scripts with:
+
+1. **Mixed Channel Types**
+   - Fiber/copper → PointToPointHelper with appropriate rates
+   - LAN → CsmaHelper for shared medium
+   - Satellite → PointToPointHelper with high delay (540ms RTT for GEO)
+   - Cellular → Simplified P2P model (full LTE available via LteHelper)
+
+2. **Error Models**
+   - Automatic BER configuration based on link type
+   - RateErrorModel for bit errors
+   - BurstErrorModel for bursty errors
+
+3. **SCADA Applications**
+   - Polling traffic using UdpEchoClient/Server
+   - GOOSE approximated with OnOff application
+   - Control commands with SBO timing
+
+4. **Failure Injection**
+   - `Simulator.Schedule()` for timed events
+   - Link disable/enable via ReceiveEnable attribute
+   - Node failure by disabling all interfaces
+   - Error rate modification for degradation
+
+5. **Routing**
+   - Global routing (default)
+   - Static routes for manual configuration
+   - OLSR/AODV/RIP protocol setup (when specified)
+
+### Architecture
+
+```
+GridNS3Generator (extends NS3ScriptGenerator)
+├── _generate_grid_channels()     # Mixed link types
+├── _generate_grid_link()         # Per-link type handling
+├── _generate_error_model()       # BER configuration
+├── _generate_grid_routing()      # Multi-protocol routing
+├── _generate_grid_applications() # SCADA traffic
+│   ├── _generate_polling_application()
+│   ├── _generate_goose_application()
+│   └── _generate_control_application()
+└── _generate_failure_injection() # Scheduled failures
+    └── _generate_failure_event_callbacks()
+```
+
+### Model Inheritance
+
+V2 models properly extend V1 base classes:
+
+```
+NodeModel (V1)
+    └── GridNodeModel (V2)
+        - grid_type → auto-sets node_type
+        - grid_role, scan_class, protocols
+        - DNP3/IEC61850 configuration
+
+LinkModel (V1)
+    └── GridLinkModel (V2)
+        - grid_link_type → auto-sets channel_type
+        - BER, reliability, MTBF/MTTR
+        - Wireless/cellular/satellite params
+
+TrafficFlow (V1)
+    └── GridTrafficFlow (V2)
+        - traffic_class → auto-sets application
+        - Priority (DSCP), timeout, retry
+        - DNP3/GOOSE message config
+```
+
+This inheritance means grid models work seamlessly with existing V1 infrastructure:
+- `NetworkModel.nodes` accepts `GridNodeModel`
+- Base `NS3ScriptGenerator` can process grid models
+- Serialization works automatically
+
+
