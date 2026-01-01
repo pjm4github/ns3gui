@@ -57,7 +57,7 @@ class NodeTypeButton(QPushButton):
         self.clicked.connect(lambda: self.clicked_with_type.emit(self.node_type))
     
     def _setup_ui(self):
-        self.setFixedHeight(64)
+        self.setFixedHeight(48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         
         color = self.COLORS[self.node_type]
@@ -65,10 +65,10 @@ class NodeTypeButton(QPushButton):
         self.setStyleSheet(f"""
             QPushButton {{
                 background: white;
-                border: 2px solid #E5E7EB;
-                border-radius: 10px;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
                 text-align: left;
-                padding: 10px 12px;
+                padding: 2px 4px;
             }}
             QPushButton:hover {{
                 border-color: {color};
@@ -81,16 +81,16 @@ class NodeTypeButton(QPushButton):
         
         # Create custom layout inside button
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(6)
         
         # Icon circle
         icon_frame = QFrame()
-        icon_frame.setFixedSize(40, 40)
+        icon_frame.setFixedSize(32, 32)
         icon_frame.setStyleSheet(f"""
             QFrame {{
                 background: {color};
-                border-radius: 20px;
+                border-radius: 16px;
             }}
         """)
         
@@ -101,7 +101,7 @@ class NodeTypeButton(QPushButton):
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet("""
             color: white;
-            font-size: 16px;
+            font-size: 13px;
             font-weight: bold;
         """)
         icon_layout.addWidget(icon_label)
@@ -110,12 +110,12 @@ class NodeTypeButton(QPushButton):
         
         # Text
         text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
+        text_layout.setSpacing(0)
         
         name_label = QLabel(self.node_type.name.title())
         name_label.setStyleSheet("""
             color: #374151;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
         """)
         text_layout.addWidget(name_label)
@@ -123,7 +123,7 @@ class NodeTypeButton(QPushButton):
         desc_label = QLabel(self.DESCRIPTIONS[self.node_type])
         desc_label.setStyleSheet("""
             color: #9CA3AF;
-            font-size: 11px;
+            font-size: 10px;
         """)
         text_layout.addWidget(desc_label)
         
@@ -163,7 +163,7 @@ class NodeTypeButton(QPushButton):
     
     def _create_drag_pixmap(self) -> QPixmap:
         """Create pixmap for drag preview."""
-        size = 60
+        size = 50
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
         
@@ -174,11 +174,11 @@ class NodeTypeButton(QPushButton):
         color = QColor(self.COLORS[self.node_type])
         painter.setBrush(color)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(5, 5, size - 10, size - 10)
+        painter.drawEllipse(4, 4, size - 8, size - 8)
         
         # Draw icon
         painter.setPen(QColor("white"))
-        font = QFont("SF Pro Display", 18)
+        font = QFont("SF Pro Display", 14)
         font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, self.ICONS[self.node_type])
@@ -199,15 +199,15 @@ class NodePalette(QWidget):
         self._setup_ui()
     
     def _setup_ui(self):
-        self.setMinimumWidth(250)
+        self.setMinimumWidth(220)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         
         # Title
         title = QLabel("Node Types")
-        title_font = QFont("SF Pro Display", 14)
+        title_font = QFont("SF Pro Display", 12)
         title_font.setWeight(QFont.Weight.Bold)
         title.setFont(title_font)
         title.setStyleSheet("color: #111827;")
@@ -215,7 +215,7 @@ class NodePalette(QWidget):
         
         # Subtitle
         subtitle = QLabel("Click to add or drag onto canvas")
-        subtitle.setStyleSheet("color: #6B7280; font-size: 12px; margin-bottom: 8px;")
+        subtitle.setStyleSheet("color: #6B7280; font-size: 10px;")
         layout.addWidget(subtitle)
         
         # Node type buttons
@@ -231,9 +231,9 @@ class NodePalette(QWidget):
         help_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         help_text.setStyleSheet("""
             color: #9CA3AF;
-            font-size: 11px;
-            padding: 12px;
+            font-size: 10px;
+            padding: 4px;
             background: #F9FAFB;
-            border-radius: 6px;
+            border-radius: 4px;
         """)
         layout.addWidget(help_text)

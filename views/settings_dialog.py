@@ -59,7 +59,7 @@ class SettingsDialog(QDialog):
             QFrame {
                 background: #F3F4F6;
                 border-radius: 4px;
-                padding: 8px;
+                padding: 2px;
             }
             QLabel {
                 color: #6B7280;
@@ -67,7 +67,7 @@ class SettingsDialog(QDialog):
             }
         """)
         info_layout = QHBoxLayout(info_frame)
-        info_layout.setContentsMargins(8, 4, 8, 4)
+        info_layout.setContentsMargins(2, 2, 2, 2)
         
         path_label = QLabel(f"Settings file: {self._settings.settings_path}")
         path_label.setWordWrap(True)

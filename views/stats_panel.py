@@ -37,13 +37,13 @@ class StatCard(QFrame):
                 background: white;
                 border: 1px solid #E5E7EB;
                 border-radius: 8px;
-                padding: 12px;
+                padding: 2px;
             }
         """)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
+        layout.setSpacing(2)
         
         # Title
         title_label = QLabel(self._title)
@@ -52,7 +52,7 @@ class StatCard(QFrame):
         
         # Value row
         value_layout = QHBoxLayout()
-        value_layout.setSpacing(4)
+        value_layout.setSpacing(2)
         
         self._value_label = QLabel(self._value)
         self._value_label.setStyleSheet("""
@@ -86,7 +86,7 @@ class SummaryTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(2)
         
         # Stats grid
         grid = QGridLayout()
@@ -137,7 +137,7 @@ class FlowsTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
         
         # Table for flow statistics
         self._table = QTableWidget()
@@ -156,13 +156,13 @@ class FlowsTab(QWidget):
                 gridline-color: #F3F4F6;
             }
             QTableWidget::item {
-                padding: 8px;
+                padding: 2px;
             }
             QHeaderView::section {
                 background: #F9FAFB;
                 border: none;
                 border-bottom: 1px solid #E5E7EB;
-                padding: 8px;
+                padding: 2px;
                 font-weight: 600;
                 color: #374151;
             }
@@ -182,7 +182,7 @@ class FlowsTab(QWidget):
         # Empty state label
         self._empty_label = QLabel("No flow statistics available.\nRun a simulation to see results.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 12px; padding: 40px;")
+        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 12px; padding: 4px;")
         layout.addWidget(self._empty_label)
         
         self._table.hide()
@@ -261,11 +261,11 @@ class ConsoleTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
         
         # Toolbar
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setSpacing(2)
         
         # Filter buttons
         self._show_errors = QPushButton("Errors")
@@ -308,14 +308,14 @@ class ConsoleTab(QWidget):
                 font-size: 12px;
                 border: 1px solid #374151;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 2px;
             }
         """)
         layout.addWidget(self._console)
         
         # Button row
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(8)
+        btn_layout.setSpacing(2)
         
         btn_layout.addStretch()
         
@@ -326,7 +326,7 @@ class ConsoleTab(QWidget):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 2px 4px;
             }
             QPushButton:hover {
                 background: #4B5563;
@@ -342,7 +342,7 @@ class ConsoleTab(QWidget):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 2px 4px;
             }
             QPushButton:hover {
                 background: #4B5563;
@@ -360,7 +360,7 @@ class ConsoleTab(QWidget):
                 color: {color};
                 border: 1px solid {color};
                 border-radius: 4px;
-                padding: 4px 8px;
+                padding: 2px 8px;
                 font-size: 11px;
             }}
             QPushButton:checked {{
@@ -469,7 +469,7 @@ class RoutingTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
         
         # Tree widget for routing tables
         self._tree = QTreeWidget()
@@ -481,7 +481,7 @@ class RoutingTab(QWidget):
                 border-radius: 6px;
             }
             QTreeWidget::item {
-                padding: 4px;
+                padding: 2px;
             }
             QTreeWidget::item:selected {
                 background: #EFF6FF;
@@ -491,7 +491,7 @@ class RoutingTab(QWidget):
                 background: #F9FAFB;
                 border: none;
                 border-bottom: 1px solid #E5E7EB;
-                padding: 8px;
+                padding: 2px;
                 font-weight: 600;
                 color: #374151;
             }
@@ -509,7 +509,7 @@ class RoutingTab(QWidget):
         # Empty state label
         self._empty_label = QLabel("No routing information available.\nRun a simulation with routers to see routing tables.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 12px; padding: 40px;")
+        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 12px; padding: 4px;")
         layout.addWidget(self._empty_label)
         
         self._tree.hide()
@@ -661,8 +661,8 @@ class StatsPanel(QWidget):
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         
         # Title
         title = QLabel("Statistics")
@@ -678,7 +678,7 @@ class StatsPanel(QWidget):
             QFrame {
                 background: #F3F4F6;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 2px;
             }
         """)
         status_layout = QHBoxLayout(self._status_frame)
@@ -729,7 +729,7 @@ class StatsPanel(QWidget):
             QTabBar::tab {
                 background: #F3F4F6;
                 border: none;
-                padding: 8px 16px;
+                padding: 2px 4px;
                 margin-right: 2px;
                 border-radius: 4px 4px 0 0;
                 color: #6B7280;

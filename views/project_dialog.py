@@ -336,7 +336,7 @@ class WorkspaceSettingsDialog(QDialog):
             "Each project contains its topology, scripts, and simulation results."
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #6B7280; margin-bottom: 10px;")
+        info_label.setStyleSheet("color: #6B7280; margin-bottom: 2px;")
         layout.addWidget(info_label)
         
         # Current workspace
@@ -388,7 +388,7 @@ class WorkspaceSettingsDialog(QDialog):
             "        └── imports/"
         )
         structure_text.setFont(QFont("Consolas", 9))
-        structure_text.setStyleSheet("color: #6B7280; background: #F3F4F6; padding: 10px;")
+        structure_text.setStyleSheet("color: #6B7280; background: #F3F4F6; padding: 2px;")
         structure_layout.addWidget(structure_text)
         
         layout.addWidget(structure_group)

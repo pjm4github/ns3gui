@@ -164,7 +164,7 @@ class CodeEditor(QPlainTextEdit):
                 color: #24292F;
                 border: 1px solid #D0D7DE;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 2px;
                 selection-background-color: #0969DA;
                 selection-color: white;
             }
@@ -297,8 +297,8 @@ class CodePreviewDialog(QDialog):
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         
         # Header
         header_layout = QHBoxLayout()
@@ -352,7 +352,7 @@ class CodePreviewDialog(QDialog):
                 color: #57606A;
                 border: 1px solid #D0D7DE;
                 border-radius: 6px;
-                padding: 8px 16px;
+                padding: 2px 4px;
                 font-size: 13px;
             }
             QPushButton:hover {
@@ -372,7 +372,7 @@ class CodePreviewDialog(QDialog):
                 color: #24292F;
                 border: 1px solid #D0D7DE;
                 border-radius: 6px;
-                padding: 8px 16px;
+                padding: 2px 4px;
                 font-size: 13px;
             }
             QPushButton:hover {
@@ -390,7 +390,7 @@ class CodePreviewDialog(QDialog):
                 color: white;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 20px;
+                padding: 2px 4px;
                 font-size: 13px;
                 font-weight: 600;
             }

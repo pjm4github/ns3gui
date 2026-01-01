@@ -43,7 +43,7 @@ class HelpDialog(QDialog):
             QFrame {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #1e40af, stop:1 #3b82f6);
-                padding: 20px;
+                padding: 2px;
             }
         """)
         header_layout = QVBoxLayout(header)
@@ -66,7 +66,7 @@ class HelpDialog(QDialog):
                 background: white;
             }
             QTabBar::tab {
-                padding: 10px 16px;
+                padding: 2px 4px;
                 margin-right: 2px;
                 background: #f3f4f6;
                 border: none;
@@ -99,7 +99,7 @@ class HelpDialog(QDialog):
         footer = QFrame()
         footer.setStyleSheet("background: #f9fafb; border-top: 1px solid #e5e7eb;")
         footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 12, 16, 12)
+        footer_layout.setContentsMargins(2, 2, 2, 2)
         
         footer_layout.addStretch()
         
@@ -109,7 +109,7 @@ class HelpDialog(QDialog):
                 background: #3b82f6;
                 color: white;
                 border: none;
-                padding: 8px 24px;
+                padding: 2px 4px;
                 border-radius: 6px;
                 font-weight: bold;
             }
@@ -138,7 +138,7 @@ class HelpDialog(QDialog):
         content.setStyleSheet("""
             QTextBrowser {
                 border: none;
-                padding: 20px;
+                padding: 2px;
                 background: white;
                 font-size: 13px;
                 line-height: 1.6;
@@ -171,30 +171,30 @@ class HelpDialog(QDialog):
             h2 {{
                 color: #1e40af;
                 font-size: 18px;
-                margin-top: 24px;
-                margin-bottom: 12px;
+                margin-top: 2px;
+                margin-bottom: 2px;
             }}
             h3 {{
                 color: #374151;
                 font-size: 15px;
-                margin-top: 20px;
-                margin-bottom: 8px;
+                margin-top: 2px;
+                margin-bottom: 2px;
             }}
             table {{
                 border-collapse: collapse;
                 width: 100%;
-                margin: 12px 0;
+                margin: 2px 0;
             }}
             th {{
                 background: #1e40af;
                 color: white;
-                padding: 10px 12px;
+                padding: 2px 4px;
                 text-align: left;
                 font-weight: 600;
             }}
             td {{
                 border: 1px solid #e5e7eb;
-                padding: 8px 12px;
+                padding: 2px 4px;
                 vertical-align: top;
             }}
             tr:nth-child(even) {{
@@ -211,7 +211,7 @@ class HelpDialog(QDialog):
             pre {{
                 background: #1f2937;
                 color: #f9fafb;
-                padding: 16px;
+                padding: 2px;
                 border-radius: 8px;
                 overflow-x: auto;
                 font-family: 'SF Mono', Consolas, monospace;
@@ -221,22 +221,22 @@ class HelpDialog(QDialog):
             .tip {{
                 background: #ecfdf5;
                 border-left: 4px solid #10b981;
-                padding: 12px 16px;
-                margin: 16px 0;
+                padding: 2px 4px;
+                margin: 2px 0;
                 border-radius: 0 8px 8px 0;
             }}
             .warning {{
                 background: #fef3c7;
                 border-left: 4px solid #f59e0b;
-                padding: 12px 16px;
-                margin: 16px 0;
+                padding: 2px 4px;
+                margin: 2px 0;
                 border-radius: 0 8px 8px 0;
             }}
             .note {{
                 background: #eff6ff;
                 border-left: 4px solid #3b82f6;
-                padding: 12px 16px;
-                margin: 16px 0;
+                padding: 2px 4px;
+                margin: 2px 0;
                 border-radius: 0 8px 8px 0;
             }}
         </style>

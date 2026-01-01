@@ -33,7 +33,7 @@ class SectionHeader(QLabel):
         self.setStyleSheet("""
             QLabel {
                 color: #374151;
-                padding: 8px 0 4px 0;
+                padding: 2px 0 4px 0;
                 border-bottom: 1px solid #E5E7EB;
                 margin-top: 8px;
             }
@@ -60,7 +60,7 @@ class CollapsibleSection(QWidget):
                 background: transparent;
                 border: none;
                 border-bottom: 1px solid #E5E7EB;
-                padding: 8px 0;
+                padding: 2px 0;
                 text-align: left;
                 font-weight: 600;
                 color: #374151;
@@ -77,7 +77,7 @@ class CollapsibleSection(QWidget):
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 8, 0, 8)
-        self._content_layout.setSpacing(8)
+        self._content_layout.setSpacing(2)
         layout.addWidget(self._content)
         
         self._title = title
@@ -104,7 +104,7 @@ def input_style() -> str:
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
             border: 1px solid #D1D5DB;
             border-radius: 6px;
-            padding: 6px 10px;
+            padding: 2px 4px;
             background: white;
             color: #374151;
             min-height: 20px;
@@ -165,11 +165,11 @@ class PortEditor(QFrame):
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         
         # Header row with expand button
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(8)
+        header_layout.setSpacing(2)
         
         # Status indicator
         self._status_dot = QLabel("●")
@@ -224,7 +224,7 @@ class PortEditor(QFrame):
         self._details.hide()
         details_layout = QVBoxLayout(self._details)
         details_layout.setContentsMargins(0, 8, 0, 0)
-        details_layout.setSpacing(8)
+        details_layout.setSpacing(2)
         
         # Layer 1 - Physical
         l1_group = self._create_layer1_section()
@@ -244,10 +244,10 @@ class PortEditor(QFrame):
     def _create_layer1_section(self) -> QWidget:
         """Create Layer 1 (Physical) settings."""
         group = QFrame()
-        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 4px; }")
+        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 2px; }")
         layout = QFormLayout(group)
         layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         
         # Section label
         l1_label = QLabel("Physical (L1)")
@@ -306,10 +306,10 @@ class PortEditor(QFrame):
     def _create_layer2_section(self) -> QWidget:
         """Create Layer 2 (Data Link) settings for switches."""
         group = QFrame()
-        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 4px; }")
+        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 2px; }")
         layout = QFormLayout(group)
         layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         
         # Section label
         l2_label = QLabel("Data Link (L2)")
@@ -353,10 +353,10 @@ class PortEditor(QFrame):
     def _create_layer3_section(self) -> QWidget:
         """Create Layer 3 (Network) settings."""
         group = QFrame()
-        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 4px; }")
+        group.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 2px; }")
         layout = QFormLayout(group)
         layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         
         # Section label
         l3_label = QLabel("Network (L3)")
@@ -380,7 +380,7 @@ class PortEditor(QFrame):
         assigned_ip_container = QWidget()
         assigned_ip_layout = QHBoxLayout(assigned_ip_container)
         assigned_ip_layout.setContentsMargins(0, 0, 0, 0)
-        assigned_ip_layout.setSpacing(4)
+        assigned_ip_layout.setSpacing(2)
         
         self._assigned_ip_label = QLabel(self.port.assigned_ip or "—")
         self._assigned_ip_label.setStyleSheet("""
@@ -388,7 +388,7 @@ class PortEditor(QFrame):
                 font-family: 'Consolas', 'Monaco', monospace;
                 color: #059669;
                 font-weight: 500;
-                padding: 4px 8px;
+                padding: 2px 8px;
                 background: #D1FAE5;
                 border: 1px solid #A7F3D0;
                 border-radius: 4px;
@@ -439,7 +439,7 @@ class PortEditor(QFrame):
                         font-family: 'Consolas', 'Monaco', monospace;
                         color: #059669;
                         font-weight: 500;
-                        padding: 4px 8px;
+                        padding: 2px 8px;
                         background: #D1FAE5;
                         border: 1px solid #A7F3D0;
                         border-radius: 4px;
@@ -451,7 +451,7 @@ class PortEditor(QFrame):
                     QLabel {
                         font-family: 'Consolas', 'Monaco', monospace;
                         color: #9CA3AF;
-                        padding: 4px 8px;
+                        padding: 2px 8px;
                         background: #F9FAFB;
                         border: 1px solid #E5E7EB;
                         border-radius: 4px;
@@ -582,7 +582,7 @@ class NodePropertiesWidget(QWidget):
         
         form = QFormLayout()
         form.setContentsMargins(0, 8, 0, 12)
-        form.setSpacing(8)
+        form.setSpacing(2)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         
         # Name
@@ -633,7 +633,7 @@ class NodePropertiesWidget(QWidget):
         
         self._type_settings_container = QVBoxLayout()
         self._type_settings_container.setContentsMargins(0, 8, 0, 12)
-        self._type_settings_container.setSpacing(8)
+        self._type_settings_container.setSpacing(2)
         layout.addLayout(self._type_settings_container)
         
         self._create_host_settings()
@@ -645,7 +645,7 @@ class NodePropertiesWidget(QWidget):
         
         # Port summary
         self._port_summary = QLabel()
-        self._port_summary.setStyleSheet("color: #6B7280; font-size: 11px; padding: 4px 0;")
+        self._port_summary.setStyleSheet("color: #6B7280; font-size: 11px; padding: 2px 0;")
         layout.addWidget(self._port_summary)
         
         # Add port button
@@ -655,7 +655,7 @@ class NodePropertiesWidget(QWidget):
                 background: white;
                 border: 1px dashed #D1D5DB;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 2px;
                 color: #6B7280;
             }
             QPushButton:hover {
@@ -669,7 +669,7 @@ class NodePropertiesWidget(QWidget):
         # Ports container
         self._ports_container = QVBoxLayout()
         self._ports_container.setContentsMargins(0, 8, 0, 0)
-        self._ports_container.setSpacing(6)
+        self._ports_container.setSpacing(2)
         layout.addLayout(self._ports_container)
         
         layout.addStretch()
@@ -679,7 +679,7 @@ class NodePropertiesWidget(QWidget):
         self._host_widget = QWidget()
         host_layout = QFormLayout(self._host_widget)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(8)
+        host_layout.setSpacing(2)
         
         self._is_server_check = QCheckBox("Acts as server")
         self._is_server_check.stateChanged.connect(self._on_host_prop_changed)
@@ -695,7 +695,7 @@ class NodePropertiesWidget(QWidget):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 2px 4px;
             }
             QPushButton:hover {
                 background: #2563EB;
@@ -710,7 +710,7 @@ class NodePropertiesWidget(QWidget):
         self._router_widget = QWidget()
         router_layout = QFormLayout(self._router_widget)
         router_layout.setContentsMargins(0, 0, 0, 0)
-        router_layout.setSpacing(8)
+        router_layout.setSpacing(2)
         
         self._routing_combo = QComboBox()
         self._routing_combo.addItem("Static Routing", "static")
@@ -737,7 +737,7 @@ class NodePropertiesWidget(QWidget):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 2px 4px;
             }
             QPushButton:hover {
                 background: #2563EB;
@@ -752,7 +752,7 @@ class NodePropertiesWidget(QWidget):
         self._switch_widget = QWidget()
         switch_layout = QFormLayout(self._switch_widget)
         switch_layout.setContentsMargins(0, 0, 0, 0)
-        switch_layout.setSpacing(8)
+        switch_layout.setSpacing(2)
         
         self._switch_mode_combo = QComboBox()
         self._switch_mode_combo.addItem("Learning Switch", "learning")
@@ -797,7 +797,7 @@ class NodePropertiesWidget(QWidget):
                 color: white;
                 border: none;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 2px;
                 font-weight: 500;
             }
             QPushButton:hover {
@@ -813,7 +813,7 @@ class NodePropertiesWidget(QWidget):
         self._wifi_widget = QWidget()
         wifi_layout = QFormLayout(self._wifi_widget)
         wifi_layout.setContentsMargins(0, 0, 0, 0)
-        wifi_layout.setSpacing(8)
+        wifi_layout.setSpacing(2)
         
         wifi_header = QLabel("WiFi Settings")
         wifi_header.setStyleSheet("font-weight: bold; color: #374151; margin-top: 4px;")
@@ -868,7 +868,7 @@ class NodePropertiesWidget(QWidget):
         self._app_widget = QWidget()
         app_layout = QFormLayout(self._app_widget)
         app_layout.setContentsMargins(0, 0, 0, 0)
-        app_layout.setSpacing(8)
+        app_layout.setSpacing(2)
         
         app_header = QLabel("Socket Application Settings")
         app_header.setStyleSheet("font-weight: bold; color: #374151; margin-top: 4px;")
@@ -1328,7 +1328,7 @@ class LinkPropertiesWidget(QWidget):
         
         form = QFormLayout()
         form.setContentsMargins(0, 8, 0, 16)
-        form.setSpacing(8)
+        form.setSpacing(2)
         
         # Channel type
         self._type_combo = QComboBox()
@@ -1364,7 +1364,7 @@ class LinkPropertiesWidget(QWidget):
         
         self._endpoints_container = QVBoxLayout()
         self._endpoints_container.setContentsMargins(0, 8, 0, 0)
-        self._endpoints_container.setSpacing(8)
+        self._endpoints_container.setSpacing(2)
         layout.addLayout(self._endpoints_container)
         
         layout.addStretch()
@@ -1426,7 +1426,7 @@ class LinkPropertiesWidget(QWidget):
         
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
+        layout.setSpacing(2)
         
         # Header
         header = QLabel(f"{role}: {node.name}")
@@ -1487,7 +1487,7 @@ class PropertyPanel(QWidget):
         self.setMaximumWidth(400)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
         
         # Title
@@ -1538,7 +1538,7 @@ class PropertyPanel(QWidget):
         
         self._empty_label = QLabel("Select a node or link\nto view and edit properties")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 13px; padding: 40px 20px;")
+        self._empty_label.setStyleSheet("color: #9CA3AF; font-size: 13px; padding: 4px 2px;")
         self._content_layout.addWidget(self._empty_label)
         
         self._content_layout.addStretch()

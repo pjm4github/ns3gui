@@ -25,7 +25,35 @@ from .project_dialog import (
 )
 from .main_window import MainWindow
 
+# V2 Grid GUI Components
+from .grid_node_palette import (
+    GridNodeTypeButton,
+    GridNodePalette,
+    CombinedNodePalette,
+)
+from .failure_scenario_panel import (
+    EventTimelineWidget,
+    EventEditorDialog,
+    FailureScenarioPanel,
+)
+from .traffic_pattern_editor import (
+    PollingGroupWidget,
+    FlowEditorDialog,
+    TrafficFlowTable,
+    TrafficPatternEditor,
+)
+from .metrics_dashboard import (
+    MetricSeries,
+    SparklineWidget,
+    MetricCard,
+    GaugeWidget,
+    FlowStatusWidget,
+    FailoverTimeline,
+    MetricsDashboard,
+)
+
 __all__ = [
+    # Base components
     "TopologyCanvas",
     "TopologyScene", 
     "NodeGraphicsItem",
@@ -47,4 +75,22 @@ __all__ = [
     "WorkspaceSettingsDialog",
     "ProjectInfoDialog",
     "MainWindow",
+    # V2 Grid GUI Components
+    "GridNodeTypeButton",
+    "GridNodePalette",
+    "CombinedNodePalette",
+    "EventTimelineWidget",
+    "EventEditorDialog",
+    "FailureScenarioPanel",
+    "PollingGroupWidget",
+    "FlowEditorDialog",
+    "TrafficFlowTable",
+    "TrafficPatternEditor",
+    "MetricSeries",
+    "SparklineWidget",
+    "MetricCard",
+    "GaugeWidget",
+    "FlowStatusWidget",
+    "FailoverTimeline",
+    "MetricsDashboard",
 ]

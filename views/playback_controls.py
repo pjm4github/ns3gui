@@ -42,7 +42,7 @@ class PlaybackControls(QFrame):
             PlaybackControls {
                 background: #1F2937;
                 border-radius: 8px;
-                padding: 8px;
+                padding: 2px;
             }
             QLabel {
                 color: #E5E7EB;
@@ -52,7 +52,7 @@ class PlaybackControls(QFrame):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 8px 12px;
+                padding: 2px 4px;
                 font-size: 14px;
                 min-width: 36px;
             }
@@ -97,7 +97,7 @@ class PlaybackControls(QFrame):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 24px 6px 8px;
+                padding: 2px 4px 6px 8px;
                 min-width: 70px;
             }
             QComboBox:hover {
@@ -123,12 +123,12 @@ class PlaybackControls(QFrame):
         """)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         
         # Top row: Timeline
         timeline_layout = QHBoxLayout()
-        timeline_layout.setSpacing(12)
+        timeline_layout.setSpacing(2)
         
         # Current time
         self._current_time_label = QLabel("0:00.0")
@@ -155,7 +155,7 @@ class PlaybackControls(QFrame):
         
         # Bottom row: Controls
         controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(8)
+        controls_layout.setSpacing(2)
         
         # Play/Pause button
         self._play_btn = QPushButton("▶")

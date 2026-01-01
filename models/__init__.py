@@ -96,7 +96,11 @@ from .grid_traffic import (
     GOOSEMessageConfig,
     GridTrafficFlow,    # Subclass of TrafficFlow - use directly
     PollingSchedule,
+    PollingGroup,
+    TrafficProfile,
+    QoSConfig,
     GRID_TRAFFIC_DEFAULTS,
+    TRAFFIC_CLASS_DEFAULTS,
     TRAFFIC_PATTERNS,
 )
 
@@ -186,7 +190,11 @@ __all__ = [
     "GOOSEMessageConfig",
     "GridTrafficFlow",
     "PollingSchedule",
+    "PollingGroup",
+    "TrafficProfile",
+    "QoSConfig",
     "GRID_TRAFFIC_DEFAULTS",
+    "TRAFFIC_CLASS_DEFAULTS",
     "TRAFFIC_PATTERNS",
     # Failure Events
     "FailureEventType",

@@ -183,7 +183,7 @@ class RoutingTableDialog(QDialog):
                 font-weight: bold;
                 border: 1px solid #E5E7EB;
                 border-radius: 6px;
-                margin-top: 12px;
+                margin-top: 2px;
                 padding-top: 8px;
             }
             QGroupBox::title {
@@ -211,7 +211,7 @@ class RoutingTableDialog(QDialog):
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 2px 4px;
                 font-weight: 500;
             }
             QPushButton:hover {

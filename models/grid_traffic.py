@@ -27,6 +27,8 @@ class GridTrafficClass(Enum):
     SCADA_RESPONSE = auto()
     
     # Control Operations
+    SCADA_CONTROL_SELECT = auto()
+    SCADA_CONTROL_OPERATE = auto()
     CONTROL_SELECT = auto()
     CONTROL_OPERATE = auto()
     CONTROL_DIRECT = auto()
@@ -34,6 +36,8 @@ class GridTrafficClass(Enum):
     
     # Protection (IEC 61850)
     GOOSE = auto()
+    IEC61850_GOOSE = auto()
+    IEC61850_MMS = auto()
     SAMPLED_VALUES = auto()
     MMS_REPORT = auto()
     
@@ -57,6 +61,7 @@ class GridTrafficClass(Enum):
     # Inter-Control Center
     ICCP_DATA = auto()
     ICCP_CONTROL = auto()
+    ICCP_BILATERAL = auto()
     
     def to_base_application(self) -> TrafficApplication:
         """Map to V1 TrafficApplication for code generation."""
@@ -65,6 +70,7 @@ class GridTrafficClass(Enum):
             GridTrafficClass.SCADA_EXCEPTION_POLL: TrafficApplication.ECHO,
             GridTrafficClass.HEARTBEAT: TrafficApplication.ECHO,
             GridTrafficClass.GOOSE: TrafficApplication.ONOFF,
+            GridTrafficClass.IEC61850_GOOSE: TrafficApplication.ONOFF,
             GridTrafficClass.TELEMETRY_ANALOG: TrafficApplication.ONOFF,
             GridTrafficClass.FILE_TRANSFER: TrafficApplication.BULK_SEND,
         }
@@ -285,8 +291,13 @@ class GridTrafficFlow(TrafficFlow):
     
     # Interval (ms) - maps to echo_interval in base class
     interval_ms: int = 0  # 0 = use default for traffic class
+    poll_interval_s: float = 0.0  # Alias for interval in seconds (for editor)
     initial_delay_ms: int = 0
     jitter_ms: int = 0
+    
+    # Packet sizes (for editor)
+    request_size_bytes: int = 64
+    response_size_bytes: int = 128
     
     # Protocol configuration
     grid_protocol: str = "DNP3"
@@ -337,11 +348,22 @@ class GridTrafficFlow(TrafficFlow):
         if self.port == 9:  # Parent's default
             self.port = 20000
         
-        # 4. Sync interval_ms to base class echo_interval (seconds)
+        # 4. Sync interval_ms / poll_interval_s to base class echo_interval (seconds)
+        if self.poll_interval_s > 0 and self.interval_ms == 0:
+            self.interval_ms = int(self.poll_interval_s * 1000)
+        elif self.interval_ms > 0:
+            self.poll_interval_s = self.interval_ms / 1000.0
+        
         if self.interval_ms > 0:
             self.echo_interval = self.interval_ms / 1000.0
         
-        # 5. Generate name if not set
+        # 5. Sync packet sizes
+        if self.request_size_bytes > 0:
+            self.packet_size = self.request_size_bytes
+        if self.response_size_bytes > 0:
+            self.echo_packet_size = self.response_size_bytes
+        
+        # 6. Generate name if not set
         if not self.name:
             self.name = f"{self.traffic_class.name.lower()}_{self.id[:4]}"
     
@@ -491,3 +513,225 @@ TRAFFIC_PATTERNS = {
         ]
     },
 }
+
+
+# Traffic class defaults for the editor
+TRAFFIC_CLASS_DEFAULTS: Dict[GridTrafficClass, Dict[str, Any]] = {
+    GridTrafficClass.SCADA_INTEGRITY_POLL: {
+        "poll_interval_s": 60.0,
+        "request_size_bytes": 64,
+        "response_size_bytes": 512,
+        "timeout_ms": 10000,
+    },
+    GridTrafficClass.SCADA_EXCEPTION_POLL: {
+        "poll_interval_s": 4.0,
+        "request_size_bytes": 32,
+        "response_size_bytes": 128,
+        "timeout_ms": 5000,
+    },
+    GridTrafficClass.SCADA_CONTROL_SELECT: {
+        "poll_interval_s": 0,
+        "request_size_bytes": 32,
+        "response_size_bytes": 32,
+        "timeout_ms": 2000,
+    },
+    GridTrafficClass.SCADA_CONTROL_OPERATE: {
+        "poll_interval_s": 0,
+        "request_size_bytes": 32,
+        "response_size_bytes": 32,
+        "timeout_ms": 2000,
+    },
+    GridTrafficClass.IEC61850_GOOSE: {
+        "poll_interval_s": 1.0,
+        "request_size_bytes": 128,
+        "response_size_bytes": 0,
+        "timeout_ms": 4,
+    },
+    GridTrafficClass.IEC61850_MMS: {
+        "poll_interval_s": 10.0,
+        "request_size_bytes": 64,
+        "response_size_bytes": 256,
+        "timeout_ms": 5000,
+    },
+    GridTrafficClass.ICCP_BILATERAL: {
+        "poll_interval_s": 30.0,
+        "request_size_bytes": 256,
+        "response_size_bytes": 256,
+        "timeout_ms": 10000,
+    },
+    GridTrafficClass.HEARTBEAT: {
+        "poll_interval_s": 30.0,
+        "request_size_bytes": 20,
+        "response_size_bytes": 20,
+        "timeout_ms": 10000,
+    },
+}
+
+
+@dataclass
+class PollingGroup:
+    """
+    A group of devices polled together with the same timing parameters.
+    
+    Used by the Traffic Pattern Editor to organize polling configuration.
+    """
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str = "Polling Group"
+    
+    # Timing
+    poll_interval_s: float = 60.0
+    response_timeout_s: float = 5.0
+    stagger_offset_ms: int = 100
+    
+    # Traffic type
+    traffic_class: GridTrafficClass = GridTrafficClass.SCADA_EXCEPTION_POLL
+    priority: GridTrafficPriority = GridTrafficPriority.SCADA_NORMAL
+    
+    # Member devices
+    member_node_ids: List[str] = field(default_factory=list)
+    
+    # Protocol settings
+    protocol: str = "DNP3"
+    
+    # State
+    enabled: bool = True
+    
+    def __post_init__(self):
+        if not self.name:
+            self.name = f"Group_{self.id[:4]}"
+    
+    @property
+    def member_count(self) -> int:
+        return len(self.member_node_ids)
+    
+    @property
+    def polls_per_minute(self) -> float:
+        if self.poll_interval_s > 0:
+            return 60.0 / self.poll_interval_s * self.member_count
+        return 0
+    
+    def add_member(self, node_id: str):
+        if node_id not in self.member_node_ids:
+            self.member_node_ids.append(node_id)
+    
+    def remove_member(self, node_id: str):
+        if node_id in self.member_node_ids:
+            self.member_node_ids.remove(node_id)
+    
+    def generate_flows(self, source_id: str, start_time: float = 1.0, 
+                       stop_time: float = 60.0) -> List['GridTrafficFlow']:
+        """Generate traffic flows for all members in this group."""
+        flows = []
+        
+        for i, member_id in enumerate(self.member_node_ids):
+            initial_delay = i * self.stagger_offset_ms / 1000.0
+            
+            flow = GridTrafficFlow(
+                traffic_class=self.traffic_class,
+                priority=self.priority,
+                source_node_id=source_id,
+                target_node_id=member_id,
+                interval_ms=int(self.poll_interval_s * 1000),
+                initial_delay_ms=int(initial_delay * 1000),
+                start_time=start_time + initial_delay,
+                stop_time=stop_time,
+                timeout_ms=int(self.response_timeout_s * 1000),
+            )
+            flows.append(flow)
+        
+        return flows
+
+
+@dataclass 
+class TrafficProfile:
+    """
+    A complete traffic profile combining multiple polling groups.
+    
+    Used to define standard traffic patterns that can be applied
+    to a network topology.
+    """
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str = "Traffic Profile"
+    description: str = ""
+    
+    # Polling groups
+    polling_groups: List[PollingGroup] = field(default_factory=list)
+    
+    # Additional flows (not part of polling groups)
+    additional_flows: List['GridTrafficFlow'] = field(default_factory=list)
+    
+    # Timing
+    simulation_duration_s: float = 120.0
+    warmup_time_s: float = 1.0
+    
+    # Tags
+    tags: List[str] = field(default_factory=list)
+    
+    def __post_init__(self):
+        if not self.name:
+            self.name = f"Profile_{self.id[:4]}"
+    
+    def add_polling_group(self, group: PollingGroup):
+        self.polling_groups.append(group)
+    
+    def remove_polling_group(self, group_id: str):
+        self.polling_groups = [g for g in self.polling_groups if g.id != group_id]
+    
+    def generate_all_flows(self, control_center_id: str) -> List['GridTrafficFlow']:
+        """Generate all traffic flows for this profile."""
+        flows = []
+        
+        for group in self.polling_groups:
+            if group.enabled:
+                group_flows = group.generate_flows(
+                    source_id=control_center_id,
+                    start_time=self.warmup_time_s,
+                    stop_time=self.simulation_duration_s,
+                )
+                flows.extend(group_flows)
+        
+        flows.extend(self.additional_flows)
+        return flows
+    
+    @property
+    def total_polls_per_minute(self) -> float:
+        return sum(g.polls_per_minute for g in self.polling_groups if g.enabled)
+    
+    @property
+    def total_devices(self) -> int:
+        return sum(g.member_count for g in self.polling_groups)
+
+
+@dataclass
+class QoSConfig:
+    """
+    Quality of Service configuration for grid traffic.
+    
+    Maps to ns-3 traffic control and QoS settings.
+    """
+    # DSCP marking
+    enable_dscp: bool = True
+    default_dscp: int = 0
+    
+    # Traffic class to DSCP mapping
+    dscp_mapping: Dict[GridTrafficClass, int] = field(default_factory=lambda: {
+        GridTrafficClass.GOOSE: 46,
+        GridTrafficClass.IEC61850_GOOSE: 46,
+        GridTrafficClass.SCADA_CONTROL_SELECT: 34,
+        GridTrafficClass.SCADA_CONTROL_OPERATE: 34,
+        GridTrafficClass.SCADA_EXCEPTION_POLL: 26,
+        GridTrafficClass.SCADA_INTEGRITY_POLL: 18,
+        GridTrafficClass.HEARTBEAT: 0,
+    })
+    
+    # Queue configuration
+    enable_queuing: bool = True
+    queue_discipline: str = "pfifo_fast"  # or "htb", "cbq"
+    
+    # Rate limiting
+    enable_rate_limit: bool = False
+    max_rate_kbps: int = 10000
+    burst_bytes: int = 15000
+    
+    def get_dscp_for_class(self, traffic_class: GridTrafficClass) -> int:
+        return self.dscp_mapping.get(traffic_class, self.default_dscp)

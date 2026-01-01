@@ -515,7 +515,7 @@ class SocketAppEditorDialog(QDialog):
                 color: white;
                 border: none;
                 border-radius: 3px;
-                padding: 4px 10px;
+                padding: 2px 4px;
                 font-size: 11px;
                 font-weight: bold;
             }}
@@ -570,8 +570,8 @@ class SocketAppEditorDialog(QDialog):
         return """
         <style>
             body { font-family: -apple-system, sans-serif; font-size: 12px; line-height: 1.5; }
-            h3 { color: #61AFEF; margin-top: 12px; margin-bottom: 6px; }
-            code { background: #2C313A; padding: 2px 5px; border-radius: 3px; color: #98C379; }
+            h3 { color: #61AFEF; margin-top: 2px; margin-bottom: 2px; }
+            code { background: #2C313A; padding: 1px 2px; border-radius: 3px; color: #98C379; }
             .func { color: #C678DD; }
             .note { background: #3E4451; padding: 8px; border-radius: 4px; margin: 8px 0; }
             pre { background: #2C313A; padding: 8px; border-radius: 4px; overflow-x: auto; }

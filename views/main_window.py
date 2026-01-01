@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QAction, QKeySequence, QIcon
 from PyQt6.QtWidgets import (
@@ -18,20 +18,29 @@ from PyQt6.QtWidgets import (
     QDockWidget, QMenuBar, QMenu, QFileDialog,
     QDialog, QFormLayout, QLineEdit, QSpinBox,
     QDoubleSpinBox, QComboBox, QDialogButtonBox,
-    QGroupBox, QListWidget, QListWidgetItem, QCheckBox
+    QGroupBox, QListWidget, QListWidgetItem, QCheckBox,
+    QTabWidget
 )
 
 from models import (
     NetworkModel, NodeModel, NodeType, PortConfig, 
     SimulationState, SimulationStatus, SimulationConfig,
     TrafficFlow, TrafficApplication, TrafficProtocol,
-    SimulationResults, Project, ProjectManager as ProjectMgr
+    SimulationResults, Project, ProjectManager as ProjectMgr,
+    # Grid models
+    GridNodeModel, GridNodeType, GridTrafficFlow, FailureScenario,
 )
 from views import TopologyCanvas, PropertyPanel, NodePalette, StatsPanel, PlaybackControls
 from views.settings_dialog import SettingsDialog
 from views.project_dialog import (
     NewProjectDialog, OpenProjectDialog, ProjectInfoDialog
 )
+# Grid GUI components
+from views.grid_node_palette import CombinedNodePalette
+from views.failure_scenario_panel import FailureScenarioPanel
+from views.traffic_pattern_editor import TrafficPatternEditor
+from views.metrics_dashboard import MetricsDashboard
+
 from services import (
     ProjectManager, export_to_mininet,
     NS3ScriptGenerator, NS3SimulationManager, NS3Detector,
@@ -53,24 +62,24 @@ class SimulationToolbar(QToolBar):
             QToolBar {
                 background: #F9FAFB;
                 border-bottom: 1px solid #E5E7EB;
-                padding: 8px 16px;
-                spacing: 8px;
+                padding: 2px 4px;
+                spacing: 2px;
             }
             QPushButton {
-                padding: 8px 16px;
-                border-radius: 6px;
+                padding: 2px 8px;
+                border-radius: 4px;
                 font-weight: 500;
-                font-size: 13px;
+                font-size: 12px;
             }
             QCheckBox {
                 color: #374151;
-                font-size: 13px;
-                spacing: 6px;
+                font-size: 12px;
+                spacing: 2px;
             }
             QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 4px;
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
                 border: 1px solid #D1D5DB;
                 background: white;
             }
@@ -170,7 +179,7 @@ class SimulationToolbar(QToolBar):
                 font-size: 14px;
                 font-weight: bold;
                 font-family: 'Consolas', 'Monaco', monospace;
-                padding: 4px 12px;
+                padding: 2px 4px;
                 background: #F3F4F6;
                 border: 1px solid #D1D5DB;
                 border-radius: 4px;
@@ -248,7 +257,7 @@ class SimulationToolbar(QToolBar):
                 font-size: 14px;
                 font-weight: bold;
                 font-family: 'Consolas', 'Monaco', monospace;
-                padding: 4px 12px;
+                padding: 2px 4px;
                 background: {bg_color};
                 border: 1px solid {border_color};
                 border-radius: 4px;
@@ -307,6 +316,9 @@ class MainWindow(QMainWindow):
         self.sim_manager = NS3SimulationManager()
         self._sim_output_dir = ""
         self._current_project_path = ""  # Path to current project file
+        
+        # Grid-specific models
+        self.failure_scenario: Optional[FailureScenario] = None
         
         # Load saved ns-3 path from settings
         self._load_ns3_settings()
@@ -583,7 +595,7 @@ class MainWindow(QMainWindow):
         self.toolbar.clear_btn.clicked.connect(self._on_clear_topology)
     
     def _setup_central_widget(self):
-        """Create the main layout with all panels."""
+        """Create the main layout with all panels including Grid components."""
         central = QWidget()
         self.setCentralWidget(central)
         
@@ -591,27 +603,74 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Main splitter
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Main splitter (horizontal: left palette | center | right properties)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Left panel - Node palette
-        self.node_palette = NodePalette()
+        # Left panel - Combined Node palette (standard + grid nodes)
+        self.node_palette = CombinedNodePalette()
         self.node_palette.setStyleSheet("""
             QWidget {
                 background: white;
                 border-right: 1px solid #E5E7EB;
             }
         """)
-        splitter.addWidget(self.node_palette)
+        main_splitter.addWidget(self.node_palette)
         
-        # Center - Topology canvas
+        # Center - Canvas and bottom tabs in vertical splitter
+        center_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Topology canvas
         self.canvas = TopologyCanvas(self.network_model)
         self.canvas.setStyleSheet("""
             QGraphicsView {
                 border: none;
             }
         """)
-        splitter.addWidget(self.canvas)
+        center_splitter.addWidget(self.canvas)
+        
+        # Bottom tabs: Traffic, Failures, Metrics
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                border-top: 1px solid #E5E7EB;
+                background: white;
+            }
+            QTabBar::tab {
+                padding: 2px 4px;
+                border: none;
+                background: #F3F4F6;
+                margin-right: 1px;
+            }
+            QTabBar::tab:selected {
+                background: white;
+                border-top: 2px solid #3B82F6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #E5E7EB;
+            }
+        """)
+        
+        # Traffic Pattern Editor tab
+        self.traffic_editor = TrafficPatternEditor()
+        self.bottom_tabs.addTab(self.traffic_editor, "Traffic Patterns")
+        
+        # Failure Scenario Panel tab
+        self.failure_panel = FailureScenarioPanel()
+        self.bottom_tabs.addTab(self.failure_panel, "Failure Scenarios")
+        
+        # Metrics Dashboard tab
+        self.metrics_dashboard = MetricsDashboard()
+        self.bottom_tabs.addTab(self.metrics_dashboard, "Metrics")
+        
+        center_splitter.addWidget(self.bottom_tabs)
+        
+        # Set initial sizes for center splitter (canvas: 70%, tabs: 30%)
+        center_splitter.setSizes([500, 200])
+        center_splitter.setStretchFactor(0, 1)
+        center_splitter.setStretchFactor(1, 0)
+        
+        main_splitter.addWidget(center_splitter)
         
         # Right panel - Properties and Stats in vertical splitter
         right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -622,7 +681,7 @@ class MainWindow(QMainWindow):
             }
             QSplitter::handle {
                 background: #E5E7EB;
-                height: 3px;
+                height: 2px;
             }
             QSplitter::handle:hover {
                 background: #D1D5DB;
@@ -644,15 +703,15 @@ class MainWindow(QMainWindow):
         right_splitter.setStretchFactor(0, 1)
         right_splitter.setStretchFactor(1, 1)
         
-        splitter.addWidget(right_splitter)
+        main_splitter.addWidget(right_splitter)
         
-        # Set splitter sizes (left: 250, center: stretch, right: 300)
-        splitter.setSizes([250, 800, 300])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
+        # Set splitter sizes (left: 280, center: stretch, right: 300)
+        main_splitter.setSizes([280, 800, 300])
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
         
-        layout.addWidget(splitter)
+        layout.addWidget(main_splitter)
     
     def _setup_playback_controls(self):
         """Create playback controls bar at bottom of canvas."""
@@ -672,7 +731,7 @@ class MainWindow(QMainWindow):
             QStatusBar {
                 background: #F9FAFB;
                 border-top: 1px solid #E5E7EB;
-                padding: 4px 8px;
+                padding: 2px 8px;
                 color: #6B7280;
                 font-size: 12px;
             }
@@ -692,8 +751,11 @@ class MainWindow(QMainWindow):
     
     def _connect_signals(self):
         """Connect all signals."""
-        # Node palette -> Canvas
-        self.node_palette.nodeTypeSelected.connect(self._on_node_type_selected)
+        # Node palette -> Canvas (standard nodes via nodeTypeSelected string)
+        self.node_palette.nodeTypeSelected.connect(self._on_node_type_selected_by_name)
+        
+        # Grid node palette -> Canvas (grid nodes)
+        self.node_palette.gridNodeTypeSelected.connect(self._on_grid_node_type_selected)
         
         # Canvas -> Property panel
         self.canvas.itemSelected.connect(self.property_panel.set_selection)
@@ -704,6 +766,12 @@ class MainWindow(QMainWindow):
         self.canvas.topology_scene.nodeRemoved.connect(self._update_counts)
         self.canvas.topology_scene.linkAdded.connect(self._update_counts)
         self.canvas.topology_scene.linkRemoved.connect(self._update_counts)
+        
+        # Scene changes -> Update grid editors
+        self.canvas.topology_scene.nodeAdded.connect(self._update_grid_editors)
+        self.canvas.topology_scene.nodeRemoved.connect(self._update_grid_editors)
+        self.canvas.topology_scene.linkAdded.connect(self._update_grid_editors)
+        self.canvas.topology_scene.linkRemoved.connect(self._update_grid_editors)
         
         # Scene medium type change -> property panel update
         self.canvas.topology_scene.mediumTypeChanged.connect(self._on_scene_medium_type_changed)
@@ -725,6 +793,12 @@ class MainWindow(QMainWindow):
         
         # Simulation state
         self.simulation_state.statusChanged.connect(self._on_simulation_status_changed)
+        
+        # Traffic editor -> sim_config
+        self.traffic_editor.flowsChanged.connect(self._on_traffic_flows_changed)
+        
+        # Failure panel -> failure_scenario
+        self.failure_panel.scenarioChanged.connect(self._on_failure_scenario_changed)
     
     def _connect_simulation_signals(self):
         """Connect simulation manager signals."""
@@ -798,6 +872,74 @@ class MainWindow(QMainWindow):
         """Handle node type selection from palette."""
         item = self.canvas.add_node_at_center(node_type)
         self.statusBar().showMessage(f"Added {node_type.name.lower()}", 2000)
+    
+    def _on_node_type_selected_by_name(self, type_name: str):
+        """Handle node type selection by name string from CombinedNodePalette."""
+        # Check if it's a grid node type (prefixed with GRID_)
+        if type_name.startswith("GRID_"):
+            # This will be handled by _on_grid_node_type_selected
+            return
+        
+        # Standard node type
+        try:
+            node_type = NodeType[type_name]
+            self._on_node_type_selected(node_type)
+        except KeyError:
+            self.statusBar().showMessage(f"Unknown node type: {type_name}", 2000)
+    
+    def _on_grid_node_type_selected(self, grid_type: GridNodeType):
+        """Handle grid node type selection from palette."""
+        # Create a GridNodeModel
+        node = GridNodeModel(grid_type=grid_type)
+        
+        # Position at center of visible area
+        center = self.canvas.mapToScene(self.canvas.viewport().rect().center())
+        node.position.x = center.x()
+        node.position.y = center.y()
+        
+        # Add to network model
+        self.network_model.nodes[node.id] = node
+        
+        # Add to canvas
+        self.canvas.topology_scene.add_node(node)
+        
+        # Update status
+        type_name = grid_type.name.replace("_", " ").title()
+        self.statusBar().showMessage(f"Added {type_name}", 2000)
+        self._update_counts()
+        self._update_grid_editors()
+    
+    def _on_traffic_flows_changed(self, flows: List[GridTrafficFlow]):
+        """Handle traffic flows changed from editor."""
+        # Update sim_config with the new flows
+        self.sim_config.flows = flows
+        self.statusBar().showMessage(f"Traffic: {len(flows)} flows configured", 2000)
+    
+    def _on_failure_scenario_changed(self, scenario: FailureScenario):
+        """Handle failure scenario changed from editor."""
+        self.failure_scenario = scenario
+        if scenario:
+            self.statusBar().showMessage(
+                f"Failure scenario: {scenario.name} ({len(scenario.events)} events)", 
+                2000
+            )
+    
+    def _update_grid_editors(self):
+        """Update grid editors with current network state."""
+        # Build node info dict for traffic editor
+        nodes = {}
+        for node_id, node in self.network_model.nodes.items():
+            if isinstance(node, GridNodeModel):
+                nodes[node_id] = (node.name, node.grid_type)
+            else:
+                nodes[node_id] = (node.name, node.node_type)
+        
+        self.traffic_editor.set_network_nodes(nodes)
+        
+        # Update failure panel targets
+        node_ids = list(self.network_model.nodes.keys())
+        link_ids = list(self.network_model.links.keys())
+        self.failure_panel.set_available_targets(node_ids, link_ids)
     
     def _on_port_selected(self, node_model: NodeModel, port: PortConfig):
         """Handle port selection from canvas."""
@@ -2351,13 +2493,13 @@ class NS3PathDialog(QDialog):
                     "✓ Running on Windows with WSL available.\n"
                     "You can use a Linux path (e.g., ~/ns-3-dev) to run ns-3 inside WSL."
                 )
-                platform_info.setStyleSheet("color: #10B981; margin-bottom: 8px;")
+                platform_info.setStyleSheet("color: #10B981; margin-bottom: 2px;")
             else:
                 platform_info = QLabel(
                     "⚠ Running on Windows without WSL.\n"
                     "Install WSL to run ns-3: Open PowerShell as Admin and run 'wsl --install'"
                 )
-                platform_info.setStyleSheet("color: #F59E0B; margin-bottom: 8px;")
+                platform_info.setStyleSheet("color: #F59E0B; margin-bottom: 2px;")
             platform_info.setWordWrap(True)
             layout.addWidget(platform_info)
         
@@ -2367,7 +2509,7 @@ class NS3PathDialog(QDialog):
             "This should be the directory containing the 'ns3' or 'waf' script."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("color: #6B7280; margin-bottom: 12px;")
+        info.setStyleSheet("color: #6B7280; margin-bottom: 2px;")
         layout.addWidget(info)
         
         # Path input
