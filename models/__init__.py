@@ -123,6 +123,20 @@ from .failure_events import (
     create_dos_attack,
 )
 
+# Shape Definitions (Custom Node Shapes)
+from .shape_definition import (
+    PrimitiveType,
+    PointType,
+    EdgeType,
+    ControlPoint,
+    Edge,
+    ShapePrimitive,
+    ShapeConnector,
+    ShapeStyle,
+    ShapeDefinition,
+    ShapeLibrary,
+)
+
 
 __all__ = [
     # ===== V1 Base Models =====
@@ -212,4 +226,15 @@ __all__ = [
     "create_network_partition",
     "create_control_center_failover",
     "create_dos_attack",
+    # Shape Definitions (Custom Node Shapes)
+    "PrimitiveType",
+    "PointType",
+    "EdgeType",
+    "ControlPoint",
+    "Edge",
+    "ShapePrimitive",
+    "ShapeConnector",
+    "ShapeStyle",
+    "ShapeDefinition",
+    "ShapeLibrary",
 ]

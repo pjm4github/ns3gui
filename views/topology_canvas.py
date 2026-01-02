@@ -22,6 +22,9 @@ from PyQt6.QtWidgets import (
 
 from models import NodeType, MediumType, ChannelType, PortType, Position, NetworkModel, NodeModel, LinkModel, PortConfig
 
+# Import shape rendering (Phase 3)
+from services.shape_manager import get_shape_manager
+
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
@@ -383,9 +386,17 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
     Supports selection, dragging, and shows ports around the edge.
     Shows "App" indicator when node has an application script.
     Double-click opens the Socket Application Editor.
+    Ctrl+double-click opens the Shape Editor (Phase 5).
+    
+    When USE_SHAPE_RENDERER is True, uses the ShapeManager for custom
+    shape rendering instead of the default ellipse.
     """
     
     NODE_RADIUS = 35
+    
+    # Set to True to use ShapeManager for custom shapes
+    # Set to False to use legacy ellipse rendering
+    USE_SHAPE_RENDERER = True
     
     def __init__(self, node_model: NodeModel, parent: Optional[QGraphicsItem] = None):
         super().__init__(
@@ -424,6 +435,9 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         color = COLORS[self.node_model.node_type]
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 2))
+        
+        # When using shape renderer, the brush/pen are just fallback
+        # The actual rendering is done in paint() using ShapeRenderer
     
     def _update_app_indicator(self):
         """Show or hide the 'py' indicator based on node's app_script."""
@@ -502,6 +516,10 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         # Center icon in node
         icon_rect = self._icon.boundingRect()
         self._icon.setPos(-icon_rect.width() / 2, -icon_rect.height() / 2)
+        
+        # Hide the text icon when using shape renderer (it renders its own icon)
+        if self.USE_SHAPE_RENDERER:
+            self._icon.setVisible(False)
     
     def _create_port_indicators(self):
         """Create visual indicators for each port."""
@@ -520,17 +538,18 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
             return
         
         # Distribute ports evenly around the node (default)
-        # Start from right side (-π/2) and go clockwise
-        start_angle = -math.pi / 2
+        # Start from right (3 o'clock, angle = 0) and go clockwise
+        # Matches Qt ellipse convention: 0 rad = right, angles increase clockwise
+        start_angle = 0
         
         for i, port in enumerate(self.node_model.ports):
             # Use saved angle if available, otherwise distribute evenly
             if port.angle is not None:
                 angle = port.angle
             elif num_ports == 1:
-                angle = 0  # Single port on right
+                angle = 0  # Single port at right (3 o'clock)
             else:
-                # Distribute evenly
+                # Distribute evenly starting from right, going clockwise
                 angle = start_angle + (2 * math.pi * i / num_ports)
             
             # Always save the angle to the model so it persists
@@ -585,10 +604,16 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 2))
         
-        # Update icon
+        # Update icon (only visible when not using shape renderer)
         self._icon.setPlainText(self._get_icon_char())
         icon_rect = self._icon.boundingRect()
         self._icon.setPos(-icon_rect.width() / 2, -icon_rect.height() / 2)
+        self._icon.setVisible(not self.USE_SHAPE_RENDERER)
+        
+        # Invalidate shape cache if using shape renderer
+        if self.USE_SHAPE_RENDERER:
+            shape_manager = get_shape_manager()
+            shape_manager._invalidate_cache(self._get_shape_id())
         
         self.update()
     
@@ -634,14 +659,97 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
         super().hoverLeaveEvent(event)
     
     def mouseDoubleClickEvent(self, event):
-        """Handle double-click - open script editor."""
+        """Handle double-click - open script editor or shape editor."""
+        # Ctrl+double-click opens shape editor (Phase 5)
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._open_shape_editor()
+            event.accept()
+            return
+        
+        # Regular double-click opens script editor
         scene = self.scene()
         if scene and isinstance(scene, TopologyScene):
             scene.nodeDoubleClicked.emit(self.node_model.id)
         event.accept()
     
+    def _open_shape_editor(self):
+        """Open the shape editor dialog for this node's shape."""
+        from PyQt6.QtWidgets import QDialog
+        from views.shape_editor_dialog import ShapeEditorDialog
+        from models.shape_definition import ShapeConnector
+        import math
+        
+        shape_id = self._get_shape_id()
+        shape_manager = get_shape_manager()
+        shape = shape_manager.get_shape(shape_id)
+        
+        if shape:
+            # Make a copy to edit
+            shape = shape.copy()
+            
+            # Sync connectors with node's ports
+            ports = self.node_model.ports
+            if ports:
+                # Convert port angles to edge positions
+                # Coordinate system (matches Qt ellipse):
+                # - 0% / 0 rad = right (3 o'clock)
+                # - 25% / π/2 rad = bottom (6 o'clock)
+                # - 50% / π rad = left (9 o'clock)
+                # - 75% / 3π/2 rad = top (12 o'clock)
+                # - Angles increase clockwise (in screen coordinates)
+                def angle_to_edge_position(angle: float) -> float:
+                    """Convert port angle (radians) to edge position (0-1)."""
+                    # Direct conversion: edge_position = angle / (2π)
+                    edge_pos = angle / (2 * math.pi)
+                    # Normalize to [0, 1)
+                    edge_pos = edge_pos % 1.0
+                    if edge_pos < 0:
+                        edge_pos += 1.0
+                    return edge_pos
+                
+                # Create connectors to match ports
+                new_connectors = []
+                for i, port in enumerate(ports):
+                    # Get port angle (default to evenly distributed if not set)
+                    if port.angle is not None:
+                        angle = port.angle
+                    else:
+                        # Default distribution starting from right (0 rad), going clockwise
+                        angle = (2 * math.pi * i / len(ports))
+                    
+                    edge_pos = angle_to_edge_position(angle)
+                    
+                    # Create connector with port's label
+                    conn = ShapeConnector(
+                        id=f"port_{i}",
+                        label=port.display_name[:10],  # Truncate to 10 chars
+                        edge_position=edge_pos,
+                        direction="outward"
+                    )
+                    new_connectors.append(conn)
+                
+                # Replace shape connectors
+                shape.connectors = new_connectors
+            
+            # Get parent widget for dialog
+            views = self.scene().views()
+            parent = views[0] if views else None
+            
+            dialog = ShapeEditorDialog(shape, parent=parent)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                # Shape is automatically saved by the dialog
+                # Update this node's appearance
+                self.update()
+                
+                # Notify scene to refresh all nodes of this type
+                scene = self.scene()
+                if scene and isinstance(scene, TopologyScene):
+                    scene.refresh_nodes_of_type(shape_id)
+                    # Emit signal so main window can refresh palette icons
+                    scene.shapeEdited.emit(shape_id)
+    
     def contextMenuEvent(self, event):
-        """Show context menu for node - allows quick medium type selection."""
+        """Show context menu for node - allows quick medium type selection and shape editing."""
         scene = self.scene()
         if not scene or not isinstance(scene, TopologyScene):
             return
@@ -665,7 +773,18 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
             QMenu::item:selected {
                 background: #EBF5FF;
             }
+            QMenu::separator {
+                height: 1px;
+                background: #E5E7EB;
+                margin: 4px 8px;
+            }
         """)
+        
+        # Edit Shape action (if using shape renderer)
+        if self.USE_SHAPE_RENDERER:
+            edit_shape_action = menu.addAction("Edit Shape...")
+            edit_shape_action.triggered.connect(self._open_shape_editor)
+            menu.addSeparator()
         
         # Medium type submenu
         medium_menu = menu.addMenu("Set Medium Type")
@@ -700,15 +819,67 @@ class NodeGraphicsItem(QGraphicsEllipseItem):
             scene.mediumTypeChanged.emit(self.node_model.id, medium_type)
     
     def paint(self, painter: QPainter, option, widget):
-        """Custom paint with selection highlight."""
-        # Draw selection ring
-        if self.isSelected():
-            painter.setPen(QPen(COLORS["selection"], 3, Qt.PenStyle.DashLine))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(self.rect().adjusted(-5, -5, 5, 5))
+        """Custom paint with selection highlight and optional shape rendering."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Draw node
-        super().paint(painter, option, widget)
+        if self.USE_SHAPE_RENDERER:
+            # Use ShapeManager for rendering
+            self._paint_with_shape_renderer(painter)
+        else:
+            # Legacy rendering: draw selection ring and use parent ellipse
+            if self.isSelected():
+                painter.setPen(QPen(COLORS["selection"], 3, Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(self.rect().adjusted(-5, -5, 5, 5))
+            
+            # Draw node using parent class
+            super().paint(painter, option, widget)
+    
+    def _paint_with_shape_renderer(self, painter: QPainter):
+        """Paint the node using ShapeManager shapes."""
+        # Import here to avoid circular imports
+        from views.shape_renderer import ShapeRenderer
+        
+        # Get the shape ID based on node type
+        shape_id = self._get_shape_id()
+        
+        # Get the shape from manager
+        shape_manager = get_shape_manager()
+        shape = shape_manager.get_shape(shape_id)
+        
+        if shape:
+            # Create rect for shape rendering
+            rect = self.rect()  # This is already set up in __init__
+            
+            # Render using ShapeRenderer
+            ShapeRenderer.render(
+                painter, shape, rect,
+                selected=self.isSelected(),
+                hover=self._is_hovered,
+                show_connectors=False,  # We have our own port rendering
+                opacity=1.0
+            )
+        else:
+            # Fallback to legacy rendering
+            if self.isSelected():
+                painter.setPen(QPen(COLORS["selection"], 3, Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(self.rect().adjusted(-5, -5, 5, 5))
+            
+            # Draw ellipse with node color
+            color = COLORS.get(self.node_model.node_type, QColor("#4A90D9"))
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(color.darker(120), 2))
+            painter.drawEllipse(self.rect())
+    
+    def _get_shape_id(self) -> str:
+        """Get the shape ID for this node."""
+        # Check for grid node type first
+        if hasattr(self.node_model, 'grid_type') and self.node_model.grid_type:
+            return self.node_model.grid_type.name
+        
+        # Fall back to standard node type
+        return self.node_model.node_type.name
 
 
 
@@ -1753,6 +1924,7 @@ class TopologyScene(QGraphicsScene):
     portSelected = pyqtSignal(object, object)  # NodeModel, PortConfig
     mediumTypeChanged = pyqtSignal(str, object)  # node_id, new_medium_type
     nodeDoubleClicked = pyqtSignal(str)  # node_id - for opening script editor
+    shapeEdited = pyqtSignal(str)        # shape_id - emitted when shape editor saves
     
     def __init__(self, network_model: NetworkModel, parent=None):
         super().__init__(parent)
@@ -2104,6 +2276,61 @@ class TopologyScene(QGraphicsScene):
             if (link_item.link_model.source_node_id == node_id or 
                 link_item.link_model.target_node_id == node_id):
                 link_item.update_position()
+    
+    def refresh_nodes_of_type(self, shape_id: str):
+        """
+        Refresh all nodes that use a specific shape.
+        
+        Called after a shape is modified in the shape editor to update
+        all nodes using that shape on the canvas. This includes:
+        - Updating the visual appearance
+        - Syncing port positions from shape connectors
+        - Updating connected links
+        
+        Args:
+            shape_id: The shape ID (e.g., "HOST", "RTU", "SUBSTATION")
+        """
+        import math
+        
+        # Clear shape cache for this shape
+        shape_manager = get_shape_manager()
+        shape_manager._invalidate_cache(shape_id)
+        
+        # Get the updated shape to sync connector positions
+        shape = shape_manager.get_shape(shape_id)
+        
+        # Update all node items that use this shape
+        for node_item in self._node_items.values():
+            item_shape_id = node_item._get_shape_id() if hasattr(node_item, '_get_shape_id') else None
+            if item_shape_id == shape_id:
+                # Sync port positions from shape connectors
+                if shape and shape.connectors:
+                    ports = node_item.node_model.ports
+                    for i, port in enumerate(ports):
+                        if i < len(shape.connectors):
+                            # Convert edge_position (0-1) to angle (radians)
+                            # Coordinate system (matches Qt ellipse):
+                            # - 0% / 0 rad = right (3 o'clock)
+                            # - 25% / π/2 rad = bottom (6 o'clock)
+                            # - 50% / π rad = left (9 o'clock)
+                            # - 75% / 3π/2 rad = top (12 o'clock)
+                            # Direct conversion: angle = edge_position * 2π
+                            edge_pos = shape.connectors[i].edge_position
+                            new_angle = edge_pos * 2 * math.pi
+                            
+                            # Update the port model
+                            port.angle = new_angle
+                            
+                            # Update the port graphics item
+                            port_item = node_item._port_items.get(port.id)
+                            if port_item:
+                                port_item.set_angle(new_angle)
+                
+                # Update the node visual
+                node_item.update()
+                
+                # Update connected links to reflect new port positions
+                self.update_links_for_node(node_item.node_model.id)
     
     def on_port_clicked(self, port_item):
         """Handle port selection."""

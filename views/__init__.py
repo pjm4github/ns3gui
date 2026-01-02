@@ -51,6 +51,22 @@ from .metrics_dashboard import (
     FailoverTimeline,
     MetricsDashboard,
 )
+from .layout_debugger import LayoutDebugger, LayoutDebugOverlay, enable_layout_debugging
+from .shape_renderer import (
+    ShapeRenderer,
+    NodeShapeRenderer,
+    PaletteIconRenderer,
+    render_shape,
+    create_shape_preview,
+)
+from .shape_editor_dialog import (
+    ShapeEditorDialog,
+    ShapeEditorCanvas,
+    StyleEditorPanel,
+    PrimitivesPanel,
+    ConnectorsPanel,
+)
+from .shape_manager_dialog import ShapeManagerDialog, ShapeCard
 
 __all__ = [
     # Base components
@@ -93,4 +109,23 @@ __all__ = [
     "FlowStatusWidget",
     "FailoverTimeline",
     "MetricsDashboard",
+    # Layout debugging
+    "LayoutDebugger",
+    "LayoutDebugOverlay",
+    "enable_layout_debugging",
+    # Shape rendering
+    "ShapeRenderer",
+    "NodeShapeRenderer",
+    "PaletteIconRenderer",
+    "render_shape",
+    "create_shape_preview",
+    # Shape editor
+    "ShapeEditorDialog",
+    "ShapeEditorCanvas",
+    "StyleEditorPanel",
+    "PrimitivesPanel",
+    "ConnectorsPanel",
+    # Shape manager
+    "ShapeManagerDialog",
+    "ShapeCard",
 ]

@@ -1,0 +1,124 @@
+{
+  "version": "1.0",
+  "shapes": {
+    "HOST": {
+      "id": "HOST",
+      "name": "Host (Custom)",
+      "version": 2,
+      "primitives": [
+        {
+          "id": "e15646ec",
+          "primitive_type": "ellipse",
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true
+        }
+      ],
+      "connectors": [
+        {
+          "id": "54e73498",
+          "edge_position": 0.0,
+          "label": "eth0"
+        },
+        {
+          "id": "3eeb8ebb",
+          "edge_position": 0.25,
+          "label": "eth1"
+        },
+        {
+          "id": "4d2ea1e0",
+          "edge_position": 0.5,
+          "label": "eth2"
+        },
+        {
+          "id": "0ff7d180",
+          "edge_position": 0.75,
+          "label": "eth3"
+        }
+      ],
+      "style": {
+        "fill_color": "#FF6B6B",
+        "fill_opacity": 1.0,
+        "stroke_color": "#EE5A5A",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "PC",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 14,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 55.0,
+      "base_height": 55.0,
+      "is_default": false,
+      "modified": true
+    },
+    "TRANSFORMER": {
+      "id": "TRANSFORMER",
+      "name": "Transformer",
+      "version": 1,
+      "primitives": [
+        {
+          "id": "d60c7b12",
+          "primitive_type": "ellipse",
+          "bounds": [
+            0.0,
+            0.15,
+            0.55,
+            0.7
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true
+        },
+        {
+          "id": "eb06423f",
+          "primitive_type": "ellipse",
+          "bounds": [
+            0.45,
+            0.15,
+            0.55,
+            0.7
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true
+        }
+      ],
+      "connectors": [
+        {
+          "id": "ab81bc4e",
+          "edge_position": 0.0,
+          "label": "Pri"
+        },
+        {
+          "id": "72c1c29a",
+          "edge_position": 0.5,
+          "label": "Sec"
+        }
+      ],
+      "style": {
+        "fill_color": "#9333EA",
+        "fill_opacity": 1.0,
+        "stroke_color": "#7E22CE",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "T",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 18,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 70.0,
+      "base_height": 50.0,
+      "is_default": false,
+      "modified": true
+    }
+  }
+}

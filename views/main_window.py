@@ -40,12 +40,13 @@ from views.grid_node_palette import CombinedNodePalette
 from views.failure_scenario_panel import FailureScenarioPanel
 from views.traffic_pattern_editor import TrafficPatternEditor
 from views.metrics_dashboard import MetricsDashboard
+from views.layout_debugger import LayoutDebugger, enable_layout_debugging
 
 from services import (
     ProjectManager, export_to_mininet,
     NS3ScriptGenerator, NS3SimulationManager, NS3Detector,
     TracePlayer, PacketEvent, PacketEventType,
-    get_settings
+    get_settings, ShapeManager, get_shape_manager
 )
 
 
@@ -323,6 +324,10 @@ class MainWindow(QMainWindow):
         # Load saved ns-3 path from settings
         self._load_ns3_settings()
         
+        # Initialize shape manager (loads default + user shapes)
+        self.shape_manager = get_shape_manager()
+        self.shape_manager.initialize()
+        
         # Trace player for packet animation
         self.trace_player = TracePlayer()
         
@@ -339,6 +344,9 @@ class MainWindow(QMainWindow):
         
         # Restore window geometry
         self._load_window_settings()
+        
+        # Enable layout debugging (Ctrl+hover to identify widgets)
+        self._setup_layout_debugger()
     
     def _load_ns3_settings(self):
         """Load saved ns-3 configuration from settings file."""
@@ -512,6 +520,12 @@ class MainWindow(QMainWindow):
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self._on_show_settings)
         edit_menu.addAction(settings_action)
+        
+        edit_menu.addSeparator()
+        
+        shape_manager_action = QAction("Shape &Manager...", self)
+        shape_manager_action.triggered.connect(self._on_show_shape_manager)
+        edit_menu.addAction(shape_manager_action)
         
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -727,6 +741,7 @@ class MainWindow(QMainWindow):
     def _setup_status_bar(self):
         """Create status bar."""
         status = QStatusBar()
+        status.setObjectName("MainWindow_StatusBar")
         status.setStyleSheet("""
             QStatusBar {
                 background: #F9FAFB;
@@ -740,15 +755,38 @@ class MainWindow(QMainWindow):
         
         # Node/link count
         self._count_label = QLabel("Nodes: 0  Links: 0")
+        self._count_label.setObjectName("MainWindow_CountLabel")
         status.addWidget(self._count_label)
         
         # Spacer
         status.addWidget(QWidget(), 1)
         
         # Instructions
-        self._instruction_label = QLabel("Click nodes to add • Right-drag to link • Scroll to zoom")
+        self._instruction_label = QLabel("Click nodes to add • Right-drag to link • Scroll to zoom • Ctrl+hover for widget info")
+        self._instruction_label.setObjectName("MainWindow_InstructionLabel")
         status.addWidget(self._instruction_label)
     
+    def _setup_layout_debugger(self):
+        """Setup layout debugger for Ctrl+hover widget identification."""
+        debugger = LayoutDebugger.instance()
+        
+        # Register main components with meaningful identifiers
+        debugger.register_widget(self, "MainWindow")
+        debugger.register_widget(self.node_palette, "CombinedNodePalette")
+        debugger.register_widget(self.canvas, "TopologyCanvas")
+        debugger.register_widget(self.property_panel, "PropertyPanel")
+        debugger.register_widget(self.stats_panel, "StatsPanel")
+        debugger.register_widget(self.bottom_tabs, "BottomTabs")
+        debugger.register_widget(self.traffic_editor, "TrafficPatternEditor")
+        debugger.register_widget(self.failure_panel, "FailureScenarioPanel")
+        debugger.register_widget(self.metrics_dashboard, "MetricsDashboard")
+        
+        # Auto-register children of key components
+        debugger.auto_register(self.node_palette, "NodePalette", max_depth=5)
+        debugger.auto_register(self.traffic_editor, "TrafficEditor", max_depth=4)
+        debugger.auto_register(self.failure_panel, "FailurePanel", max_depth=4)
+        debugger.auto_register(self.metrics_dashboard, "MetricsDash", max_depth=4)
+
     def _connect_signals(self):
         """Connect all signals."""
         # Node palette -> Canvas (standard nodes via nodeTypeSelected string)
@@ -778,6 +816,9 @@ class MainWindow(QMainWindow):
         
         # Application node double-click -> open script editor
         self.canvas.topology_scene.nodeDoubleClicked.connect(self._on_node_double_clicked)
+        
+        # Shape edited -> refresh palette icons
+        self.canvas.topology_scene.shapeEdited.connect(self._on_shape_edited)
         
         # Property changes -> Canvas update
         self.property_panel.propertiesChanged.connect(self._on_properties_changed)
@@ -1772,6 +1813,43 @@ class MainWindow(QMainWindow):
         dialog.settingsChanged.connect(self._on_settings_changed)
         dialog.workspaceChanged.connect(self._on_workspace_changed)
         dialog.exec()
+    
+    def _on_show_shape_manager(self):
+        """Show the shape manager dialog."""
+        from views.shape_manager_dialog import ShapeManagerDialog
+        
+        dialog = ShapeManagerDialog(self)
+        dialog.shapes_changed.connect(self._on_shapes_changed)
+        dialog.exec()
+    
+    def _on_shapes_changed(self):
+        """Handle shape changes from shape manager."""
+        # Refresh canvas to show updated shapes
+        if hasattr(self, 'canvas') and self.canvas:
+            # Clear shape cache
+            shape_manager = get_shape_manager()
+            shape_manager._path_cache.clear()
+            
+            # Update all nodes on canvas
+            self.canvas.topology_scene.update()
+            
+            # Also refresh palette icons by recreating them
+            # (This is a bit heavy-handed but ensures consistency)
+            self._refresh_palette_icons()
+        
+        self.statusBar().showMessage("Shapes updated", 2000)
+    
+    def _refresh_palette_icons(self):
+        """Refresh palette icons after shape changes."""
+        # Call refresh_icons on the palette to re-render all icons
+        if hasattr(self, 'node_palette') and self.node_palette:
+            self.node_palette.refresh_icons()
+    
+    def _on_shape_edited(self, shape_id: str):
+        """Handle shape edited from canvas (via Ctrl+double-click or context menu)."""
+        # Refresh palette icons to show the updated shape
+        self._refresh_palette_icons()
+        self.statusBar().showMessage(f"Shape '{shape_id}' updated", 2000)
     
     def _on_settings_changed(self):
         """Handle settings changes from dialog."""

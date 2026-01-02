@@ -1,0 +1,311 @@
+{
+  "version": "1.0",
+  "shapes": {
+    "HOST": {
+      "id": "HOST",
+      "name": "Host",
+      "version": 1,
+      "primitives": [
+        {
+          "id": "59820633",
+          "primitive_type": "ellipse",
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true
+        }
+      ],
+      "connectors": [
+        {
+          "id": "0719da6f",
+          "edge_position": 0.0,
+          "label": "N"
+        },
+        {
+          "id": "5dabe889",
+          "edge_position": 0.25,
+          "label": "E"
+        },
+        {
+          "id": "35f9fde3",
+          "edge_position": 0.5,
+          "label": "S"
+        },
+        {
+          "id": "499bf28e",
+          "edge_position": 0.75,
+          "label": "W"
+        }
+      ],
+      "style": {
+        "fill_color": "#4A90D9",
+        "fill_opacity": 1.0,
+        "stroke_color": "#2563EB",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "H",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 16,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 50.0,
+      "base_height": 50.0,
+      "is_default": true,
+      "modified": false
+    },
+    "SUBSTATION": {
+      "id": "SUBSTATION",
+      "name": "Substation",
+      "version": 1,
+      "primitives": [
+        {
+          "id": "83e28bd7",
+          "primitive_type": "polygon",
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true,
+          "points": [
+            {
+              "id": "058c53e0",
+              "x": 0.5,
+              "y": 0.0,
+              "point_type": "corner"
+            },
+            {
+              "id": "f939cb8d",
+              "x": 0.9330127018922193,
+              "y": 0.25,
+              "point_type": "corner"
+            },
+            {
+              "id": "20a8ade5",
+              "x": 0.9330127018922194,
+              "y": 0.7499999999999999,
+              "point_type": "corner"
+            },
+            {
+              "id": "625c7b68",
+              "x": 0.5,
+              "y": 1.0,
+              "point_type": "corner"
+            },
+            {
+              "id": "9d90f79c",
+              "x": 0.06698729810778076,
+              "y": 0.7500000000000002,
+              "point_type": "corner"
+            },
+            {
+              "id": "b57f32d7",
+              "x": 0.0669872981077807,
+              "y": 0.24999999999999994,
+              "point_type": "corner"
+            }
+          ]
+        }
+      ],
+      "connectors": [
+        {
+          "id": "b4bbb46d",
+          "edge_position": 0.0,
+          "label": "N"
+        },
+        {
+          "id": "3708ad6c",
+          "edge_position": 0.167,
+          "label": "NE"
+        },
+        {
+          "id": "1d08b45a",
+          "edge_position": 0.333,
+          "label": "SE"
+        },
+        {
+          "id": "93d1417d",
+          "edge_position": 0.5,
+          "label": "S"
+        },
+        {
+          "id": "f726a155",
+          "edge_position": 0.667,
+          "label": "SW"
+        },
+        {
+          "id": "d2d55055",
+          "edge_position": 0.833,
+          "label": "NW"
+        }
+      ],
+      "style": {
+        "fill_color": "#065F46",
+        "fill_opacity": 1.0,
+        "stroke_color": "#064E3B",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "\u2b21",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 18,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 60.0,
+      "base_height": 60.0,
+      "is_default": true,
+      "modified": false
+    },
+    "CONTROL_CENTER": {
+      "id": "CONTROL_CENTER",
+      "name": "Control Center",
+      "version": 1,
+      "primitives": [
+        {
+          "id": "f4c246db",
+          "primitive_type": "rectangle",
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.2,
+          "closed": true
+        }
+      ],
+      "connectors": [
+        {
+          "id": "03b8d0c9",
+          "edge_position": 0.125,
+          "label": "N"
+        },
+        {
+          "id": "cff7548f",
+          "edge_position": 0.375,
+          "label": "E"
+        },
+        {
+          "id": "ed4619cf",
+          "edge_position": 0.625,
+          "label": "S"
+        },
+        {
+          "id": "4b100960",
+          "edge_position": 0.875,
+          "label": "W"
+        }
+      ],
+      "style": {
+        "fill_color": "#1E40AF",
+        "fill_opacity": 1.0,
+        "stroke_color": "#1E3A8A",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "\u26a1",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 16,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 70.0,
+      "base_height": 50.0,
+      "is_default": true,
+      "modified": false
+    },
+    "COMM_ROUTER": {
+      "id": "COMM_ROUTER",
+      "name": "Communication Router",
+      "version": 1,
+      "primitives": [
+        {
+          "id": "2bd3d24e",
+          "primitive_type": "polygon",
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "rotation": 0.0,
+          "corner_radius": 0.0,
+          "closed": true,
+          "points": [
+            {
+              "id": "018d3acb",
+              "x": 0.5,
+              "y": 0.0,
+              "point_type": "corner"
+            },
+            {
+              "id": "a332564f",
+              "x": 1.0,
+              "y": 0.5,
+              "point_type": "corner"
+            },
+            {
+              "id": "fcfd0f1c",
+              "x": 0.5,
+              "y": 1.0,
+              "point_type": "corner"
+            },
+            {
+              "id": "cfd459fc",
+              "x": 0.0,
+              "y": 0.5,
+              "point_type": "corner"
+            }
+          ]
+        }
+      ],
+      "connectors": [
+        {
+          "id": "ba1006a2",
+          "edge_position": 0.0,
+          "label": "N"
+        },
+        {
+          "id": "a9060ed2",
+          "edge_position": 0.25,
+          "label": "E"
+        },
+        {
+          "id": "3ecc9a20",
+          "edge_position": 0.5,
+          "label": "S"
+        },
+        {
+          "id": "b89a2696",
+          "edge_position": 0.75,
+          "label": "W"
+        }
+      ],
+      "style": {
+        "fill_color": "#8B5CF6",
+        "fill_opacity": 1.0,
+        "stroke_color": "#7C3AED",
+        "stroke_width": 2.0,
+        "stroke_opacity": 1.0,
+        "icon_text": "\u25c8",
+        "icon_font_family": "SF Pro Display",
+        "icon_font_size": 16,
+        "icon_color": "#FFFFFF",
+        "icon_bold": true
+      },
+      "base_width": 50.0,
+      "base_height": 50.0,
+      "is_default": true,
+      "modified": false
+    }
+  }
+}

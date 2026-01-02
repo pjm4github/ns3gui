@@ -43,6 +43,10 @@ from .topology_converter import (
     WorkspaceManager,
     NS3ExampleProcessor,
 )
+from .shape_manager import (
+    ShapeManager,
+    get_shape_manager,
+)
 
 __all__ = [
     "ProjectManager",
@@ -85,4 +89,7 @@ __all__ = [
     "TopologyConverter",
     "WorkspaceManager",
     "NS3ExampleProcessor",
+    # Shape management
+    "ShapeManager",
+    "get_shape_manager",
 ]
