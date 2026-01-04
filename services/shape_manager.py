@@ -13,6 +13,7 @@ Usage:
 """
 
 import math
+import os
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -21,7 +22,7 @@ from PyQt6.QtCore import QRectF, QPointF
 
 from models.shape_definition import (
     ShapeDefinition, ShapePrimitive, ShapeConnector, ShapeStyle,
-    ControlPoint, Edge, ShapeLibrary,
+    ControlPoint, Edge, ShapeLibrary, SimulatorNodeDefaults,
     PrimitiveType, PointType, EdgeType,
 )
 from models.network import NodeType
@@ -70,18 +71,39 @@ class ShapeManager(QObject):
         super().__init__()
         self._shapes: Dict[str, ShapeDefinition] = {}
         self._path_cache: Dict[str, QPainterPath] = {}
-        self._shapes_dir: Path = Path.home() / ".ns3gui" / "shapes"
+        self._shapes_dir_override: Path = None  # Optional override for testing
         self._initialized = False
     
     @property
     def shapes_directory(self) -> Path:
-        """Get the shapes directory path."""
-        return self._shapes_dir
+        """Get the shapes directory path from settings (or override if set)."""
+        if self._shapes_dir_override is not None:
+            return self._shapes_dir_override
+        return self._get_shapes_dir_from_settings()
     
     @shapes_directory.setter
     def shapes_directory(self, path: Path):
-        """Set the shapes directory path."""
-        self._shapes_dir = Path(path)
+        """Set override for shapes directory path (for testing)."""
+        self._shapes_dir_override = Path(path) if path else None
+    
+    def _get_shapes_dir_from_settings(self) -> Path:
+        """Get shapes directory from application settings."""
+        try:
+            from services.settings_manager import get_settings
+            settings = get_settings()
+            return settings.paths.get_shapes_dir()
+        except Exception as e:
+            print(f"Warning: Could not get shapes dir from settings: {e}")
+            # Fallback to default if settings not available
+            import platform
+            system = platform.system()
+            if system == "Windows":
+                docs = Path(os.environ.get("USERPROFILE", "~")) / "Documents"
+                return docs.expanduser() / "NS3GUI" / "shapes"
+            elif system == "Darwin":
+                return Path.home() / "Documents" / "NS3GUI" / "shapes"
+            else:
+                return Path.home() / "ns3gui" / "shapes"
     
     def initialize(self):
         """
@@ -100,8 +122,9 @@ class ShapeManager(QObject):
     
     def _ensure_shapes_directory(self):
         """Create shapes directory if it doesn't exist."""
-        self._shapes_dir.mkdir(parents=True, exist_ok=True)
-        exports_dir = self._shapes_dir / "exports"
+        shapes_dir = self.shapes_directory
+        shapes_dir.mkdir(parents=True, exist_ok=True)
+        exports_dir = shapes_dir / "exports"
         exports_dir.mkdir(exist_ok=True)
     
     def _load_default_shapes(self):
@@ -118,7 +141,7 @@ class ShapeManager(QObject):
     
     def _load_user_shapes(self):
         """Load user customizations from file."""
-        user_file = self._shapes_dir / "user_shapes.json"
+        user_file = self.shapes_directory / "user_shapes.json"
         if user_file.exists():
             library = ShapeLibrary.load_from_file(user_file)
             if library:
@@ -137,7 +160,11 @@ class ShapeManager(QObject):
                 library.add_shape(shape)
         
         if library.shapes:
-            user_file = self._shapes_dir / "user_shapes.json"
+            # Ensure shapes directory exists before saving
+            shapes_dir = self.shapes_directory
+            shapes_dir.mkdir(parents=True, exist_ok=True)
+            
+            user_file = shapes_dir / "user_shapes.json"
             library.save_to_file(user_file)
             print(f"Saved {len(library.shapes)} user shape customizations")
     
@@ -723,8 +750,18 @@ class ShapeManager(QObject):
             NodeType.ACCESS_POINT: "AP",
         }
         
+        # Simulator defaults for each node type
+        NS3_DEFAULTS = {
+            NodeType.HOST: SimulatorNodeDefaults.for_ns3_host(),
+            NodeType.ROUTER: SimulatorNodeDefaults.for_ns3_router(),
+            NodeType.SWITCH: SimulatorNodeDefaults.for_ns3_switch(),
+            NodeType.STATION: SimulatorNodeDefaults.for_ns3_wifi_station(),
+            NodeType.ACCESS_POINT: SimulatorNodeDefaults.for_ns3_access_point(),
+        }
+        
         fill_color, stroke_color = COLORS.get(node_type, ("#4A90D9", "#2563EB"))
         icon_text = ICONS.get(node_type, "?")
+        ns3_defaults = NS3_DEFAULTS.get(node_type, SimulatorNodeDefaults.for_ns3_host())
         
         # All standard nodes use ellipse shape
         primitive = ShapePrimitive.create_ellipse()
@@ -756,6 +793,8 @@ class ShapeManager(QObject):
             style=style,
             base_width=50.0,
             base_height=50.0,
+            palette="Standard",
+            simulator_defaults={"ns3": ns3_defaults},
             is_default=True,
             modified=False,
         )
@@ -811,8 +850,83 @@ class ShapeManager(QObject):
             GridNodeType.HMI: "🖥",
         }
         
+        # ns-3 simulator defaults for grid node types
+        # Maps to the underlying ns-3 node behavior
+        NS3_DEFAULTS = {
+            # Control hierarchy - hosts with internet stack
+            GridNodeType.CONTROL_CENTER: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.BACKUP_CONTROL_CENTER: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            # Substation acts as a switch (L2 bridge)
+            GridNodeType.SUBSTATION: SimulatorNodeDefaults(
+                simulator="ns3", base_type="switch", protocol_stack="bridge",
+                num_ports=8, port_types=["ethernet"], medium_type="wired", routing_mode="none"
+            ),
+            # Field devices - hosts
+            GridNodeType.RTU: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.IED: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.DATA_CONCENTRATOR: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.RELAY: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.METER: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            # Communication infrastructure
+            GridNodeType.GATEWAY: SimulatorNodeDefaults(
+                simulator="ns3", base_type="router", protocol_stack="internet",
+                num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.COMM_ROUTER: SimulatorNodeDefaults(
+                simulator="ns3", base_type="router", protocol_stack="internet",
+                num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.COMM_SWITCH: SimulatorNodeDefaults(
+                simulator="ns3", base_type="switch", protocol_stack="bridge",
+                num_ports=8, port_types=["ethernet"], medium_type="wired", routing_mode="none"
+            ),
+            GridNodeType.COMM_TOWER: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=2, port_types=["ethernet", "wifi"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.SATELLITE_TERMINAL: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.CELLULAR_GATEWAY: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=2, port_types=["ethernet", "lte"], medium_type="wired", routing_mode="auto"
+            ),
+            # Special nodes
+            GridNodeType.HISTORIAN: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+            GridNodeType.HMI: SimulatorNodeDefaults(
+                simulator="ns3", base_type="host", protocol_stack="internet",
+                num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
+            ),
+        }
+        
         fill_color, stroke_color = COLORS.get(grid_type, ("#4A90D9", "#2563EB"))
         icon_text = ICONS.get(grid_type, "?")
+        ns3_defaults = NS3_DEFAULTS.get(grid_type, SimulatorNodeDefaults.for_ns3_host())
         
         # Determine shape type based on node category
         if grid_type == GridNodeType.SUBSTATION:
@@ -907,6 +1021,8 @@ class ShapeManager(QObject):
             style=style,
             base_width=base_size[0],
             base_height=base_size[1],
+            palette="Grid",
+            simulator_defaults={"ns3": ns3_defaults},
             is_default=True,
             modified=False,
         )

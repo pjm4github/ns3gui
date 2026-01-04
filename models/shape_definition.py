@@ -448,6 +448,181 @@ class ShapeStyle:
         return ShapeStyle.from_dict(self.to_dict())
 
 
+# =============================================================================
+# Simulator Node Defaults
+# =============================================================================
+
+@dataclass
+class SimulatorNodeDefaults:
+    """
+    Default node properties for a specific simulator.
+    
+    This class provides an extensible way to define simulator-specific
+    properties that are applied when a shape is instantiated on the canvas.
+    
+    The design supports multiple simulators by storing defaults in a dict
+    keyed by simulator name (e.g., "ns3", "omnet", "custom").
+    
+    Attributes:
+        simulator: Identifier for the target simulator (e.g., "ns3", "omnet")
+        base_type: The fundamental node type in the simulator
+            For ns-3: "host", "router", "switch", "station", "access_point"
+        protocol_stack: Network stack configuration
+            For ns-3: "internet" (L3 routing), "bridge" (L2 switching), "none"
+        num_ports: Default number of network ports/interfaces
+        port_types: Default port/interface types
+            For ns-3: "ethernet", "wifi", "lte", "p2p"
+        medium_type: Physical medium type
+            For ns-3: "wired", "wifi_station", "wifi_ap", "lte_ue", "lte_enb"
+        routing_mode: How routing is configured
+            For ns-3: "auto" (GlobalRoutingHelper), "manual" (static routes)
+        applications: Default applications to install
+            For ns-3: list of app configs like {"type": "udp_echo_server", "port": 9}
+        custom_properties: Additional simulator-specific properties
+            Extensible dict for future needs
+    
+    Example for ns-3 host:
+        SimulatorNodeDefaults(
+            simulator="ns3",
+            base_type="host",
+            protocol_stack="internet",
+            num_ports=4,
+            port_types=["ethernet"],
+            medium_type="wired",
+            routing_mode="auto",
+        )
+    
+    Example for ns-3 switch:
+        SimulatorNodeDefaults(
+            simulator="ns3",
+            base_type="switch",
+            protocol_stack="bridge",
+            num_ports=8,
+            port_types=["ethernet"],
+            medium_type="wired",
+            routing_mode="none",
+        )
+    """
+    simulator: str = "ns3"
+    base_type: str = "host"
+    protocol_stack: str = "internet"
+    num_ports: int = 4
+    port_types: List[str] = field(default_factory=lambda: ["ethernet"])
+    medium_type: str = "wired"
+    routing_mode: str = "auto"
+    applications: List[Dict[str, Any]] = field(default_factory=list)
+    custom_properties: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "simulator": self.simulator,
+            "base_type": self.base_type,
+            "protocol_stack": self.protocol_stack,
+            "num_ports": self.num_ports,
+            "port_types": self.port_types,
+            "medium_type": self.medium_type,
+            "routing_mode": self.routing_mode,
+            "applications": self.applications,
+            "custom_properties": self.custom_properties,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SimulatorNodeDefaults':
+        """Create from dictionary."""
+        return cls(
+            simulator=data.get("simulator", "ns3"),
+            base_type=data.get("base_type", "host"),
+            protocol_stack=data.get("protocol_stack", "internet"),
+            num_ports=data.get("num_ports", 4),
+            port_types=data.get("port_types", ["ethernet"]),
+            medium_type=data.get("medium_type", "wired"),
+            routing_mode=data.get("routing_mode", "auto"),
+            applications=data.get("applications", []),
+            custom_properties=data.get("custom_properties", {}),
+        )
+    
+    def copy(self) -> 'SimulatorNodeDefaults':
+        """Create a deep copy."""
+        import copy as copy_module
+        return SimulatorNodeDefaults(
+            simulator=self.simulator,
+            base_type=self.base_type,
+            protocol_stack=self.protocol_stack,
+            num_ports=self.num_ports,
+            port_types=list(self.port_types),
+            medium_type=self.medium_type,
+            routing_mode=self.routing_mode,
+            applications=copy_module.deepcopy(self.applications),
+            custom_properties=copy_module.deepcopy(self.custom_properties),
+        )
+    
+    @classmethod
+    def for_ns3_host(cls) -> 'SimulatorNodeDefaults':
+        """Create defaults for an ns-3 host node."""
+        return cls(
+            simulator="ns3",
+            base_type="host",
+            protocol_stack="internet",
+            num_ports=4,
+            port_types=["ethernet"],
+            medium_type="wired",
+            routing_mode="auto",
+        )
+    
+    @classmethod
+    def for_ns3_router(cls) -> 'SimulatorNodeDefaults':
+        """Create defaults for an ns-3 router node."""
+        return cls(
+            simulator="ns3",
+            base_type="router",
+            protocol_stack="internet",
+            num_ports=4,
+            port_types=["ethernet"],
+            medium_type="wired",
+            routing_mode="auto",
+        )
+    
+    @classmethod
+    def for_ns3_switch(cls) -> 'SimulatorNodeDefaults':
+        """Create defaults for an ns-3 switch node."""
+        return cls(
+            simulator="ns3",
+            base_type="switch",
+            protocol_stack="bridge",
+            num_ports=8,
+            port_types=["ethernet"],
+            medium_type="wired",
+            routing_mode="none",
+        )
+    
+    @classmethod
+    def for_ns3_wifi_station(cls) -> 'SimulatorNodeDefaults':
+        """Create defaults for an ns-3 WiFi station node."""
+        return cls(
+            simulator="ns3",
+            base_type="station",
+            protocol_stack="internet",
+            num_ports=1,
+            port_types=["wifi"],
+            medium_type="wifi_station",
+            routing_mode="auto",
+        )
+    
+    @classmethod
+    def for_ns3_access_point(cls) -> 'SimulatorNodeDefaults':
+        """Create defaults for an ns-3 WiFi access point node."""
+        return cls(
+            simulator="ns3",
+            base_type="access_point",
+            protocol_stack="internet",
+            num_ports=2,
+            port_types=["wifi", "ethernet"],
+            medium_type="wifi_ap",
+            routing_mode="auto",
+        )
+
+
 @dataclass
 class ShapeDefinition:
     """
@@ -468,6 +643,11 @@ class ShapeDefinition:
         path_start_offset: Offset to align 0% with 3 o'clock position (0-1).
             This is calculated when the shape is created/modified and maps
             between the Qt path percent and our angular coordinate system.
+        palette: Name of the palette group this shape belongs to (e.g., "Standard", "Grid")
+        simulator_defaults: Dict mapping simulator name to SimulatorNodeDefaults.
+            When a shape is dropped on the canvas, the defaults for the current
+            simulator are used to initialize the node properties.
+            Example: {"ns3": SimulatorNodeDefaults(base_type="switch", ...)}
         is_default: True if this is a built-in shape (not user-modified)
         modified: True if user has edited this shape from its default
     """
@@ -480,8 +660,34 @@ class ShapeDefinition:
     base_width: float = 50.0
     base_height: float = 50.0
     path_start_offset: float = 0.0  # Offset to align 0% with 3 o'clock
+    palette: str = "Standard"  # Palette group name
+    simulator_defaults: Dict[str, SimulatorNodeDefaults] = field(default_factory=dict)
     is_default: bool = True
     modified: bool = False
+    
+    def get_simulator_defaults(self, simulator: str = "ns3") -> SimulatorNodeDefaults:
+        """
+        Get defaults for a specific simulator.
+        
+        Args:
+            simulator: Simulator identifier (default: "ns3")
+            
+        Returns:
+            SimulatorNodeDefaults for the simulator, or default host if not found
+        """
+        if simulator in self.simulator_defaults:
+            return self.simulator_defaults[simulator]
+        # Return default host properties if not specified
+        return SimulatorNodeDefaults.for_ns3_host()
+    
+    def set_simulator_defaults(self, defaults: SimulatorNodeDefaults):
+        """
+        Set defaults for a simulator.
+        
+        Args:
+            defaults: SimulatorNodeDefaults to store (uses defaults.simulator as key)
+        """
+        self.simulator_defaults[defaults.simulator] = defaults
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -495,6 +701,11 @@ class ShapeDefinition:
             "base_width": self.base_width,
             "base_height": self.base_height,
             "path_start_offset": self.path_start_offset,
+            "palette": self.palette,
+            "simulator_defaults": {
+                sim: defaults.to_dict() 
+                for sim, defaults in self.simulator_defaults.items()
+            },
             "is_default": self.is_default,
             "modified": self.modified,
         }
@@ -502,6 +713,11 @@ class ShapeDefinition:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ShapeDefinition':
         """Create from dictionary."""
+        # Parse simulator_defaults
+        sim_defaults = {}
+        for sim, defaults_data in data.get("simulator_defaults", {}).items():
+            sim_defaults[sim] = SimulatorNodeDefaults.from_dict(defaults_data)
+        
         return cls(
             id=data.get("id", ""),
             name=data.get("name", ""),
@@ -512,6 +728,8 @@ class ShapeDefinition:
             base_width=data.get("base_width", 50.0),
             base_height=data.get("base_height", 50.0),
             path_start_offset=data.get("path_start_offset", 0.0),
+            palette=data.get("palette", "Standard"),
+            simulator_defaults=sim_defaults,
             is_default=data.get("is_default", True),
             modified=data.get("modified", False),
         )
@@ -528,6 +746,11 @@ class ShapeDefinition:
             base_width=self.base_width,
             base_height=self.base_height,
             path_start_offset=self.path_start_offset,
+            palette=self.palette,
+            simulator_defaults={
+                sim: defaults.copy() 
+                for sim, defaults in self.simulator_defaults.items()
+            },
             is_default=False,  # Copy is not default
             modified=True,     # Copy is considered modified
         )
@@ -609,40 +832,165 @@ class ShapeDefinition:
 
 
 # =============================================================================
-# Shape Library (Collection of Shapes)
+# Shape Library (Collection of Shapes organized by Palette)
 # =============================================================================
 
 @dataclass
-class ShapeLibrary:
+class PaletteGroup:
     """
-    A collection of shape definitions.
-    
-    Used to store and manage multiple shapes in a single JSON file.
+    A group of shapes belonging to a single palette tab.
     
     Attributes:
-        version: File format version
+        palette: Name of the palette (e.g., "Standard", "Grid", "Custom")
         shapes: Dictionary mapping shape ID to ShapeDefinition
     """
-    version: str = "1.0"
+    palette: str
     shapes: Dict[str, ShapeDefinition] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            "version": self.version,
+            "palette": self.palette,
             "shapes": {sid: shape.to_dict() for sid, shape in self.shapes.items()},
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ShapeLibrary':
+    def from_dict(cls, data: Dict[str, Any]) -> 'PaletteGroup':
         """Create from dictionary."""
         shapes = {}
         for sid, sdata in data.get("shapes", {}).items():
-            shapes[sid] = ShapeDefinition.from_dict(sdata)
+            shape = ShapeDefinition.from_dict(sdata)
+            shape.palette = data.get("palette", "Standard")  # Ensure palette is set
+            shapes[sid] = shape
         return cls(
-            version=data.get("version", "1.0"),
+            palette=data.get("palette", "Standard"),
             shapes=shapes,
         )
+
+
+@dataclass
+class ShapeLibrary:
+    """
+    A collection of shape definitions organized by palette groups.
+    
+    Used to store and manage multiple shapes in a single JSON file,
+    with shapes grouped by their palette tab.
+    
+    File format (version 2.0):
+    {
+        "version": "2.0",
+        "palettes": [
+            {
+                "palette": "Standard",
+                "shapes": {
+                    "HOST": {...},
+                    "ROUTER": {...}
+                }
+            },
+            {
+                "palette": "Grid",
+                "shapes": {
+                    "CONTROL_CENTER": {...},
+                    "SUBSTATION": {...}
+                }
+            }
+        ]
+    }
+    
+    Attributes:
+        version: File format version
+        palettes: List of PaletteGroup objects
+    """
+    version: str = "2.0"
+    palettes: List[PaletteGroup] = field(default_factory=list)
+    
+    @property
+    def shapes(self) -> Dict[str, ShapeDefinition]:
+        """Get all shapes as a flat dictionary (for backward compatibility)."""
+        result = {}
+        for group in self.palettes:
+            result.update(group.shapes)
+        return result
+    
+    def get_palette_names(self) -> List[str]:
+        """Get list of all palette names."""
+        return [group.palette for group in self.palettes]
+    
+    def get_palette_group(self, palette_name: str) -> Optional[PaletteGroup]:
+        """Get a palette group by name."""
+        for group in self.palettes:
+            if group.palette == palette_name:
+                return group
+        return None
+    
+    def get_or_create_palette(self, palette_name: str) -> PaletteGroup:
+        """Get or create a palette group by name."""
+        group = self.get_palette_group(palette_name)
+        if group is None:
+            group = PaletteGroup(palette=palette_name)
+            self.palettes.append(group)
+        return group
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "version": self.version,
+            "palettes": [group.to_dict() for group in self.palettes],
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ShapeLibrary':
+        """Create from dictionary, supporting both old and new formats."""
+        version = data.get("version", "1.0")
+        
+        # Check for new format (version 2.0 with palettes)
+        if "palettes" in data:
+            palettes = [PaletteGroup.from_dict(p) for p in data.get("palettes", [])]
+            return cls(version="2.0", palettes=palettes)
+        
+        # Legacy format (version 1.0 with flat shapes dict)
+        # Convert to new format by inferring palette from shape IDs
+        from models.network import NodeType
+        from models.grid_nodes import GridNodeType
+        
+        standard_ids = {nt.name for nt in NodeType}
+        grid_ids = {gt.name for gt in GridNodeType}
+        
+        standard_group = PaletteGroup(palette="Standard")
+        grid_group = PaletteGroup(palette="Grid")
+        custom_group = PaletteGroup(palette="Custom")
+        
+        for sid, sdata in data.get("shapes", {}).items():
+            shape = ShapeDefinition.from_dict(sdata)
+            
+            # Determine palette from shape ID or existing palette field
+            if shape.palette and shape.palette != "Standard":
+                palette_name = shape.palette
+            elif sid in standard_ids:
+                palette_name = "Standard"
+            elif sid in grid_ids:
+                palette_name = "Grid"
+            else:
+                palette_name = "Custom"
+            
+            shape.palette = palette_name
+            
+            if palette_name == "Standard":
+                standard_group.shapes[sid] = shape
+            elif palette_name == "Grid":
+                grid_group.shapes[sid] = shape
+            else:
+                custom_group.shapes[sid] = shape
+        
+        palettes = []
+        if standard_group.shapes:
+            palettes.append(standard_group)
+        if grid_group.shapes:
+            palettes.append(grid_group)
+        if custom_group.shapes:
+            palettes.append(custom_group)
+        
+        return cls(version="2.0", palettes=palettes)
     
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON string."""
@@ -679,18 +1027,24 @@ class ShapeLibrary:
             return None
     
     def get_shape(self, shape_id: str) -> Optional[ShapeDefinition]:
-        """Get a shape by ID."""
-        return self.shapes.get(shape_id)
+        """Get a shape by ID (searches all palettes)."""
+        for group in self.palettes:
+            if shape_id in group.shapes:
+                return group.shapes[shape_id]
+        return None
     
     def add_shape(self, shape: ShapeDefinition):
-        """Add or update a shape in the library."""
-        self.shapes[shape.id] = shape
+        """Add or update a shape in the library, placing it in the correct palette."""
+        palette_name = shape.palette or "Standard"
+        group = self.get_or_create_palette(palette_name)
+        group.shapes[shape.id] = shape
     
     def remove_shape(self, shape_id: str) -> bool:
         """Remove a shape by ID."""
-        if shape_id in self.shapes:
-            del self.shapes[shape_id]
-            return True
+        for group in self.palettes:
+            if shape_id in group.shapes:
+                del group.shapes[shape_id]
+                return True
         return False
     
     def merge(self, other: 'ShapeLibrary', overwrite: bool = True):
@@ -701,9 +1055,11 @@ class ShapeLibrary:
             other: Library to merge from
             overwrite: If True, replace existing shapes; if False, skip duplicates
         """
-        for sid, shape in other.shapes.items():
-            if overwrite or sid not in self.shapes:
-                self.shapes[sid] = shape
+        for other_group in other.palettes:
+            group = self.get_or_create_palette(other_group.palette)
+            for sid, shape in other_group.shapes.items():
+                if overwrite or sid not in group.shapes:
+                    group.shapes[sid] = shape
 
 
 # =============================================================================
@@ -721,6 +1077,8 @@ __all__ = [
     "ShapePrimitive",
     "ShapeConnector",
     "ShapeStyle",
+    "SimulatorNodeDefaults",
     "ShapeDefinition",
+    "PaletteGroup",
     "ShapeLibrary",
 ]

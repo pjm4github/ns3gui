@@ -268,6 +268,9 @@ class SettingsDialog(QDialog):
         self._templates_subdir_label = QLabel()
         subdir_layout.addRow("Templates:", self._templates_subdir_label)
         
+        self._shapes_subdir_label = QLabel()
+        subdir_layout.addRow("Shapes:", self._shapes_subdir_label)
+        
         layout.addWidget(subdir_group)
         
         # Actions
@@ -315,6 +318,7 @@ class SettingsDialog(QDialog):
         self._scripts_subdir_label.setText(f"{effective / paths.scripts_subdir}")
         self._results_subdir_label.setText(f"{effective / paths.results_subdir}")
         self._templates_subdir_label.setText(f"{effective / paths.templates_subdir}")
+        self._shapes_subdir_label.setText(f"{effective / paths.shapes_subdir}")
     
     def _browse_workspace_path(self):
         """Browse for workspace directory."""

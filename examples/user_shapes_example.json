@@ -1,124 +1,199 @@
 {
-  "version": "1.0",
-  "shapes": {
-    "HOST": {
-      "id": "HOST",
-      "name": "Host (Custom)",
-      "version": 2,
-      "primitives": [
-        {
-          "id": "e15646ec",
-          "primitive_type": "ellipse",
-          "bounds": [
-            0.0,
-            0.0,
-            1.0,
-            1.0
+  "version": "2.0",
+  "palettes": [
+    {
+      "palette": "Standard",
+      "shapes": {
+        "HOST": {
+          "id": "HOST",
+          "name": "Host (Custom)",
+          "version": 2,
+          "primitives": [
+            {
+              "id": "e15646ec",
+              "primitive_type": "ellipse",
+              "bounds": [0.0, 0.0, 1.0, 1.0],
+              "rotation": 0.0,
+              "corner_radius": 0.0,
+              "closed": true
+            }
           ],
-          "rotation": 0.0,
-          "corner_radius": 0.0,
-          "closed": true
+          "connectors": [
+            {"id": "54e73498", "edge_position": 0.0, "label": "eth0", "direction": "outward"},
+            {"id": "3eeb8ebb", "edge_position": 0.25, "label": "eth1", "direction": "outward"},
+            {"id": "4d2ea1e0", "edge_position": 0.5, "label": "eth2", "direction": "outward"},
+            {"id": "0ff7d180", "edge_position": 0.75, "label": "eth3", "direction": "outward"}
+          ],
+          "style": {
+            "fill_color": "#FF6B6B",
+            "fill_opacity": 1.0,
+            "stroke_color": "#EE5A5A",
+            "stroke_width": 2.0,
+            "stroke_opacity": 1.0,
+            "icon_text": "PC",
+            "icon_font_family": "SF Pro Display",
+            "icon_font_size": 14,
+            "icon_color": "#FFFFFF",
+            "icon_bold": true
+          },
+          "base_width": 55.0,
+          "base_height": 55.0,
+          "path_start_offset": 0.0,
+          "palette": "Standard",
+          "simulator_defaults": {
+            "ns3": {
+              "simulator": "ns3",
+              "base_type": "host",
+              "protocol_stack": "internet",
+              "num_ports": 4,
+              "port_types": ["ethernet"],
+              "medium_type": "wired",
+              "routing_mode": "auto",
+              "applications": [],
+              "custom_properties": {}
+            }
+          },
+          "is_default": false,
+          "modified": true
         }
-      ],
-      "connectors": [
-        {
-          "id": "54e73498",
-          "edge_position": 0.0,
-          "label": "eth0"
-        },
-        {
-          "id": "3eeb8ebb",
-          "edge_position": 0.25,
-          "label": "eth1"
-        },
-        {
-          "id": "4d2ea1e0",
-          "edge_position": 0.5,
-          "label": "eth2"
-        },
-        {
-          "id": "0ff7d180",
-          "edge_position": 0.75,
-          "label": "eth3"
-        }
-      ],
-      "style": {
-        "fill_color": "#FF6B6B",
-        "fill_opacity": 1.0,
-        "stroke_color": "#EE5A5A",
-        "stroke_width": 2.0,
-        "stroke_opacity": 1.0,
-        "icon_text": "PC",
-        "icon_font_family": "SF Pro Display",
-        "icon_font_size": 14,
-        "icon_color": "#FFFFFF",
-        "icon_bold": true
-      },
-      "base_width": 55.0,
-      "base_height": 55.0,
-      "is_default": false,
-      "modified": true
+      }
     },
-    "TRANSFORMER": {
-      "id": "TRANSFORMER",
-      "name": "Transformer",
-      "version": 1,
-      "primitives": [
-        {
-          "id": "d60c7b12",
-          "primitive_type": "ellipse",
-          "bounds": [
-            0.0,
-            0.15,
-            0.55,
-            0.7
+    {
+      "palette": "Grid",
+      "shapes": {
+        "SUBSTATION": {
+          "id": "SUBSTATION",
+          "name": "Substation",
+          "version": 1,
+          "primitives": [
+            {
+              "id": "hex_prim",
+              "primitive_type": "polygon",
+              "bounds": [0.0, 0.0, 1.0, 1.0],
+              "rotation": 0.0,
+              "corner_radius": 0.0,
+              "closed": true,
+              "points": [
+                {"id": "p0", "x": 0.5, "y": 0.0, "point_type": "corner"},
+                {"id": "p1", "x": 1.0, "y": 0.25, "point_type": "corner"},
+                {"id": "p2", "x": 1.0, "y": 0.75, "point_type": "corner"},
+                {"id": "p3", "x": 0.5, "y": 1.0, "point_type": "corner"},
+                {"id": "p4", "x": 0.0, "y": 0.75, "point_type": "corner"},
+                {"id": "p5", "x": 0.0, "y": 0.25, "point_type": "corner"}
+              ]
+            }
           ],
-          "rotation": 0.0,
-          "corner_radius": 0.0,
-          "closed": true
-        },
-        {
-          "id": "eb06423f",
-          "primitive_type": "ellipse",
-          "bounds": [
-            0.45,
-            0.15,
-            0.55,
-            0.7
+          "connectors": [
+            {"id": "c1", "edge_position": 0.0, "label": "N", "direction": "outward"},
+            {"id": "c2", "edge_position": 0.167, "label": "NE", "direction": "outward"},
+            {"id": "c3", "edge_position": 0.333, "label": "SE", "direction": "outward"},
+            {"id": "c4", "edge_position": 0.5, "label": "S", "direction": "outward"},
+            {"id": "c5", "edge_position": 0.667, "label": "SW", "direction": "outward"},
+            {"id": "c6", "edge_position": 0.833, "label": "NW", "direction": "outward"}
           ],
-          "rotation": 0.0,
-          "corner_radius": 0.0,
-          "closed": true
-        }
-      ],
-      "connectors": [
-        {
-          "id": "ab81bc4e",
-          "edge_position": 0.0,
-          "label": "Pri"
+          "style": {
+            "fill_color": "#065F46",
+            "fill_opacity": 1.0,
+            "stroke_color": "#064E3B",
+            "stroke_width": 2.0,
+            "stroke_opacity": 1.0,
+            "icon_text": "⬡",
+            "icon_font_family": "SF Pro Display",
+            "icon_font_size": 16,
+            "icon_color": "#FFFFFF",
+            "icon_bold": true
+          },
+          "base_width": 60.0,
+          "base_height": 60.0,
+          "path_start_offset": 0.0,
+          "palette": "Grid",
+          "simulator_defaults": {
+            "ns3": {
+              "simulator": "ns3",
+              "base_type": "switch",
+              "protocol_stack": "bridge",
+              "num_ports": 8,
+              "port_types": ["ethernet"],
+              "medium_type": "wired",
+              "routing_mode": "none",
+              "applications": [],
+              "custom_properties": {}
+            }
+          },
+          "is_default": false,
+          "modified": true
         },
-        {
-          "id": "72c1c29a",
-          "edge_position": 0.5,
-          "label": "Sec"
+        "CONTROL_CENTER": {
+          "id": "CONTROL_CENTER",
+          "name": "Control Center",
+          "version": 1,
+          "primitives": [
+            {
+              "id": "rect_prim",
+              "primitive_type": "rectangle",
+              "bounds": [0.0, 0.0, 1.0, 1.0],
+              "rotation": 0.0,
+              "corner_radius": 0.2,
+              "closed": true
+            }
+          ],
+          "connectors": [
+            {"id": "c1", "edge_position": 0.125, "label": "N", "direction": "outward"},
+            {"id": "c2", "edge_position": 0.375, "label": "E", "direction": "outward"},
+            {"id": "c3", "edge_position": 0.625, "label": "S", "direction": "outward"},
+            {"id": "c4", "edge_position": 0.875, "label": "W", "direction": "outward"}
+          ],
+          "style": {
+            "fill_color": "#1E40AF",
+            "fill_opacity": 1.0,
+            "stroke_color": "#1E3A8A",
+            "stroke_width": 2.0,
+            "stroke_opacity": 1.0,
+            "icon_text": "⚡",
+            "icon_font_family": "SF Pro Display",
+            "icon_font_size": 16,
+            "icon_color": "#FFFFFF",
+            "icon_bold": true
+          },
+          "base_width": 70.0,
+          "base_height": 50.0,
+          "path_start_offset": 0.25,
+          "palette": "Grid",
+          "simulator_defaults": {
+            "ns3": {
+              "simulator": "ns3",
+              "base_type": "host",
+              "protocol_stack": "internet",
+              "num_ports": 4,
+              "port_types": ["ethernet"],
+              "medium_type": "wired",
+              "routing_mode": "auto",
+              "applications": [
+                {"type": "scada_master", "port": 502, "protocol": "modbus"}
+              ],
+              "custom_properties": {
+                "scada_role": "master",
+                "redundancy": false
+              }
+            },
+            "omnet": {
+              "simulator": "omnet",
+              "base_type": "StandardHost",
+              "protocol_stack": "inet",
+              "num_ports": 4,
+              "port_types": ["eth"],
+              "medium_type": "wired",
+              "routing_mode": "auto",
+              "applications": [],
+              "custom_properties": {
+                "module_type": "inet.node.inet.StandardHost"
+              }
+            }
+          },
+          "is_default": false,
+          "modified": true
         }
-      ],
-      "style": {
-        "fill_color": "#9333EA",
-        "fill_opacity": 1.0,
-        "stroke_color": "#7E22CE",
-        "stroke_width": 2.0,
-        "stroke_opacity": 1.0,
-        "icon_text": "T",
-        "icon_font_family": "SF Pro Display",
-        "icon_font_size": 18,
-        "icon_color": "#FFFFFF",
-        "icon_bold": true
-      },
-      "base_width": 70.0,
-      "base_height": 50.0,
-      "is_default": false,
-      "modified": true
+      }
     }
-  }
+  ]
 }

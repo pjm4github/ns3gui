@@ -65,6 +65,7 @@ class PathSettings:
     scripts_subdir: str = "scripts"
     results_subdir: str = "results"
     templates_subdir: str = "templates"
+    shapes_subdir: str = "shapes"
     
     # Last used directories (for file dialogs)
     last_open_dir: str = ""
@@ -120,6 +121,10 @@ class PathSettings:
         """Get the topology templates directory for a profile."""
         return self.get_workspace_root(profile) / self.templates_subdir
     
+    def get_shapes_dir(self, profile: Optional[str] = None) -> Path:
+        """Get the user shapes directory for a profile."""
+        return self.get_workspace_root(profile) / self.shapes_subdir
+    
     def ensure_workspace_dirs(self, profile: Optional[str] = None):
         """Create workspace directories if they don't exist."""
         dirs = [
@@ -127,6 +132,7 @@ class PathSettings:
             self.get_scripts_dir(profile),
             self.get_results_dir(profile),
             self.get_templates_dir(profile),
+            self.get_shapes_dir(profile),
         ]
         for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
@@ -198,6 +204,26 @@ class SettingsManager:
     
     APP_NAME = "NS3GUI"
     SETTINGS_FILE = "settings.json"
+    
+    _instance: Optional['SettingsManager'] = None
+    
+    @classmethod
+    def instance(cls, config_override: Optional[str] = None) -> 'SettingsManager':
+        """
+        Get the singleton instance of SettingsManager.
+        
+        Args:
+            config_override: Optional path to override config location.
+                            Only used on first call to initialize.
+        """
+        if cls._instance is None:
+            cls._instance = cls(config_override)
+        return cls._instance
+    
+    @classmethod
+    def reset_instance(cls):
+        """Reset the singleton instance (for testing)."""
+        cls._instance = None
     
     def __init__(self, config_override: Optional[str] = None):
         """
@@ -421,10 +447,6 @@ class SettingsManager:
             return None, None
 
 
-# Global settings instance
-_settings_manager: Optional[SettingsManager] = None
-
-
 def get_settings(config_override: Optional[str] = None) -> SettingsManager:
     """
     Get the global settings manager instance.
@@ -433,13 +455,9 @@ def get_settings(config_override: Optional[str] = None) -> SettingsManager:
         config_override: Optional path to override config location.
                         Only used on first call to initialize.
     """
-    global _settings_manager
-    if _settings_manager is None:
-        _settings_manager = SettingsManager(config_override)
-    return _settings_manager
+    return SettingsManager.instance(config_override)
 
 
 def reset_settings_manager():
     """Reset the global settings manager (useful for testing)."""
-    global _settings_manager
-    _settings_manager = None
+    SettingsManager.reset_instance()
