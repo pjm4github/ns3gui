@@ -45,6 +45,7 @@
               "simulator": "ns3",
               "base_type": "host",
               "protocol_stack": "internet",
+              "behavior": "end_device",
               "num_ports": 4,
               "port_types": ["ethernet"],
               "medium_type": "wired",
@@ -112,6 +113,7 @@
               "simulator": "ns3",
               "base_type": "switch",
               "protocol_stack": "bridge",
+              "behavior": "switch",
               "num_ports": 8,
               "port_types": ["ethernet"],
               "medium_type": "wired",
@@ -164,6 +166,7 @@
               "simulator": "ns3",
               "base_type": "host",
               "protocol_stack": "internet",
+              "behavior": "scada_master",
               "num_ports": 4,
               "port_types": ["ethernet"],
               "medium_type": "wired",
@@ -180,6 +183,7 @@
               "simulator": "omnet",
               "base_type": "StandardHost",
               "protocol_stack": "inet",
+              "behavior": "scada_master",
               "num_ports": 4,
               "port_types": ["eth"],
               "medium_type": "wired",
@@ -187,6 +191,62 @@
               "applications": [],
               "custom_properties": {
                 "module_type": "inet.node.inet.StandardHost"
+              }
+            }
+          },
+          "is_default": false,
+          "modified": true
+        },
+        "RTU": {
+          "id": "RTU",
+          "name": "Remote Terminal Unit",
+          "version": 1,
+          "primitives": [
+            {
+              "id": "ellipse_prim",
+              "primitive_type": "ellipse",
+              "bounds": [0.0, 0.0, 1.0, 1.0],
+              "rotation": 0.0,
+              "corner_radius": 0.0,
+              "closed": true
+            }
+          ],
+          "connectors": [
+            {"id": "c1", "edge_position": 0.0, "label": "E", "direction": "outward"},
+            {"id": "c2", "edge_position": 0.5, "label": "W", "direction": "outward"}
+          ],
+          "style": {
+            "fill_color": "#059669",
+            "fill_opacity": 1.0,
+            "stroke_color": "#047857",
+            "stroke_width": 2.0,
+            "stroke_opacity": 1.0,
+            "icon_text": "R",
+            "icon_font_family": "SF Pro Display",
+            "icon_font_size": 16,
+            "icon_color": "#FFFFFF",
+            "icon_bold": true
+          },
+          "base_width": 50.0,
+          "base_height": 50.0,
+          "path_start_offset": 0.0,
+          "palette": "Grid",
+          "simulator_defaults": {
+            "ns3": {
+              "simulator": "ns3",
+              "base_type": "host",
+              "protocol_stack": "internet",
+              "behavior": "scada_slave",
+              "num_ports": 2,
+              "port_types": ["ethernet"],
+              "medium_type": "wired",
+              "routing_mode": "auto",
+              "applications": [
+                {"type": "scada_slave", "port": 502, "protocol": "modbus"}
+              ],
+              "custom_properties": {
+                "scada_role": "slave",
+                "polling_interval_ms": 1000
               }
             }
           },

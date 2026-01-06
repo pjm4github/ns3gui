@@ -855,71 +855,71 @@ class ShapeManager(QObject):
         NS3_DEFAULTS = {
             # Control hierarchy - hosts with internet stack
             GridNodeType.CONTROL_CENTER: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_master",
                 num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.BACKUP_CONTROL_CENTER: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_master",
                 num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             # Substation acts as a switch (L2 bridge)
             GridNodeType.SUBSTATION: SimulatorNodeDefaults(
-                simulator="ns3", base_type="switch", protocol_stack="bridge",
+                simulator="ns3", base_type="switch", protocol_stack="bridge", behavior="switch",
                 num_ports=8, port_types=["ethernet"], medium_type="wired", routing_mode="none"
             ),
             # Field devices - hosts
             GridNodeType.RTU: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_slave",
                 num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.IED: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_slave",
                 num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.DATA_CONCENTRATOR: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="data_aggregator",
                 num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.RELAY: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_slave",
                 num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.METER: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="scada_slave",
                 num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             # Communication infrastructure
             GridNodeType.GATEWAY: SimulatorNodeDefaults(
-                simulator="ns3", base_type="router", protocol_stack="internet",
+                simulator="ns3", base_type="router", protocol_stack="internet", behavior="gateway",
                 num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.COMM_ROUTER: SimulatorNodeDefaults(
-                simulator="ns3", base_type="router", protocol_stack="internet",
+                simulator="ns3", base_type="router", protocol_stack="internet", behavior="router",
                 num_ports=4, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.COMM_SWITCH: SimulatorNodeDefaults(
-                simulator="ns3", base_type="switch", protocol_stack="bridge",
+                simulator="ns3", base_type="switch", protocol_stack="bridge", behavior="switch",
                 num_ports=8, port_types=["ethernet"], medium_type="wired", routing_mode="none"
             ),
             GridNodeType.COMM_TOWER: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="access_point",
                 num_ports=2, port_types=["ethernet", "wifi"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.SATELLITE_TERMINAL: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="gateway",
                 num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.CELLULAR_GATEWAY: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="gateway",
                 num_ports=2, port_types=["ethernet", "lte"], medium_type="wired", routing_mode="auto"
             ),
             # Special nodes
             GridNodeType.HISTORIAN: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="server",
                 num_ports=2, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
             GridNodeType.HMI: SimulatorNodeDefaults(
-                simulator="ns3", base_type="host", protocol_stack="internet",
+                simulator="ns3", base_type="host", protocol_stack="internet", behavior="client",
                 num_ports=1, port_types=["ethernet"], medium_type="wired", routing_mode="auto"
             ),
         }

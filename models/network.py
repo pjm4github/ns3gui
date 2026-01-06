@@ -69,6 +69,48 @@ class RoutingMode(Enum):
     MANUAL = auto()     # User-defined static routes only
 
 
+class ProtocolStack(Enum):
+    """
+    Network protocol stack configuration for a node.
+    
+    Determines how the node processes packets at different OSI layers.
+    """
+    INTERNET = auto()   # Full IP stack (L3 routing) - hosts, routers
+    BRIDGE = auto()     # L2 bridging/switching only - switches
+    NONE = auto()       # No stack (passive device) - for future use
+
+
+class NodeBehavior(Enum):
+    """
+    High-level behavior classification for simulation.
+    
+    This determines how the node participates in the simulation,
+    independent of the underlying simulator implementation.
+    """
+    # End devices
+    END_DEVICE = auto()      # Generic endpoint (client/server)
+    SERVER = auto()          # Server role (accepts connections)
+    CLIENT = auto()          # Client role (initiates connections)
+    
+    # Network infrastructure
+    ROUTER = auto()          # Packet forwarding between networks
+    SWITCH = auto()          # L2 frame switching
+    GATEWAY = auto()         # Protocol translation / network boundary
+    
+    # Wireless infrastructure
+    ACCESS_POINT = auto()    # WiFi AP
+    BASE_STATION = auto()    # Cellular/LTE base station
+    
+    # SCADA/Grid specific
+    SCADA_MASTER = auto()    # SCADA master station
+    SCADA_SLAVE = auto()     # SCADA RTU/slave device
+    DATA_AGGREGATOR = auto() # Data concentrator / aggregation point
+    
+    # Special
+    MONITOR = auto()         # Passive monitoring / tap
+    CUSTOM = auto()          # User-defined behavior
+
+
 class RouteType(Enum):
     """Type of routing table entry."""
     CONNECTED = auto()  # Directly connected network (auto-detected)
@@ -270,6 +312,8 @@ class NodeModel:
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     node_type: NodeType = NodeType.HOST
     medium_type: MediumType = MediumType.WIRED  # Network medium type
+    protocol_stack: ProtocolStack = ProtocolStack.INTERNET  # Network stack (L2/L3)
+    behavior: NodeBehavior = NodeBehavior.END_DEVICE  # High-level simulation role
     name: str = ""
     position: Position = field(default_factory=Position)
     

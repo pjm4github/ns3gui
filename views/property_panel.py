@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from models import (
     NodeModel, LinkModel, NodeType, MediumType, ChannelType,
     PortConfig, PortType, VlanMode, PORT_TYPE_SPECS,
-    NetworkModel, RoutingMode
+    NetworkModel, RoutingMode, ProtocolStack, NodeBehavior
 )
 
 
@@ -614,6 +614,34 @@ class NodePropertiesWidget(QWidget):
         self._medium_combo.setStyleSheet(input_style())
         form.addRow("Medium:", self._medium_combo)
         
+        # Protocol Stack (L2/L3)
+        self._protocol_stack_combo = QComboBox()
+        self._protocol_stack_combo.addItem("Internet (L3 Routing)", ProtocolStack.INTERNET)
+        self._protocol_stack_combo.addItem("Bridge (L2 Switching)", ProtocolStack.BRIDGE)
+        self._protocol_stack_combo.addItem("None (Passive)", ProtocolStack.NONE)
+        self._protocol_stack_combo.currentIndexChanged.connect(self._on_protocol_stack_changed)
+        self._protocol_stack_combo.setStyleSheet(input_style())
+        form.addRow("Protocol Stack:", self._protocol_stack_combo)
+        
+        # Behavior (simulation role)
+        self._behavior_combo = QComboBox()
+        self._behavior_combo.addItem("End Device", NodeBehavior.END_DEVICE)
+        self._behavior_combo.addItem("Server", NodeBehavior.SERVER)
+        self._behavior_combo.addItem("Client", NodeBehavior.CLIENT)
+        self._behavior_combo.addItem("Router", NodeBehavior.ROUTER)
+        self._behavior_combo.addItem("Switch", NodeBehavior.SWITCH)
+        self._behavior_combo.addItem("Gateway", NodeBehavior.GATEWAY)
+        self._behavior_combo.addItem("Access Point", NodeBehavior.ACCESS_POINT)
+        self._behavior_combo.addItem("Base Station", NodeBehavior.BASE_STATION)
+        self._behavior_combo.addItem("SCADA Master", NodeBehavior.SCADA_MASTER)
+        self._behavior_combo.addItem("SCADA Slave", NodeBehavior.SCADA_SLAVE)
+        self._behavior_combo.addItem("Data Aggregator", NodeBehavior.DATA_AGGREGATOR)
+        self._behavior_combo.addItem("Monitor", NodeBehavior.MONITOR)
+        self._behavior_combo.addItem("Custom", NodeBehavior.CUSTOM)
+        self._behavior_combo.currentIndexChanged.connect(self._on_behavior_changed)
+        self._behavior_combo.setStyleSheet(input_style())
+        form.addRow("Behavior:", self._behavior_combo)
+        
         # Description
         self._desc_edit = QLineEdit()
         self._desc_edit.setPlaceholderText("Optional description")
@@ -1011,6 +1039,8 @@ class NodePropertiesWidget(QWidget):
             self._name_edit.clear()
             self._type_combo.setCurrentIndex(0)
             self._medium_combo.setCurrentIndex(0)
+            self._protocol_stack_combo.setCurrentIndex(0)
+            self._behavior_combo.setCurrentIndex(0)
             self._desc_edit.clear()
             self._id_label.clear()
             self._port_summary.setText("")
@@ -1032,6 +1062,20 @@ class NodePropertiesWidget(QWidget):
         idx = self._medium_combo.findData(medium)
         self._medium_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._medium_combo.blockSignals(False)
+        
+        # Update protocol stack combo
+        self._protocol_stack_combo.blockSignals(True)
+        protocol_stack = getattr(self._node, 'protocol_stack', ProtocolStack.INTERNET)
+        idx = self._protocol_stack_combo.findData(protocol_stack)
+        self._protocol_stack_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._protocol_stack_combo.blockSignals(False)
+        
+        # Update behavior combo
+        self._behavior_combo.blockSignals(True)
+        behavior = getattr(self._node, 'behavior', NodeBehavior.END_DEVICE)
+        idx = self._behavior_combo.findData(behavior)
+        self._behavior_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._behavior_combo.blockSignals(False)
         
         self._desc_edit.blockSignals(True)
         self._desc_edit.setText(self._node.description)
@@ -1158,6 +1202,20 @@ class NodePropertiesWidget(QWidget):
             if new_medium != getattr(self._node, 'medium_type', MediumType.WIRED):
                 self._node.medium_type = new_medium
                 self.mediumTypeChanged.emit(new_medium)
+                self.propertiesChanged.emit()
+    
+    def _on_protocol_stack_changed(self, index):
+        if self._node:
+            new_stack = self._protocol_stack_combo.currentData()
+            if new_stack != getattr(self._node, 'protocol_stack', ProtocolStack.INTERNET):
+                self._node.protocol_stack = new_stack
+                self.propertiesChanged.emit()
+    
+    def _on_behavior_changed(self, index):
+        if self._node:
+            new_behavior = self._behavior_combo.currentData()
+            if new_behavior != getattr(self._node, 'behavior', NodeBehavior.END_DEVICE):
+                self._node.behavior = new_behavior
                 self.propertiesChanged.emit()
     
     def _on_desc_changed(self, text):

@@ -469,6 +469,9 @@ class SimulatorNodeDefaults:
             For ns-3: "host", "router", "switch", "station", "access_point"
         protocol_stack: Network stack configuration
             For ns-3: "internet" (L3 routing), "bridge" (L2 switching), "none"
+        behavior: High-level behavior classification
+            For ns-3: "end_device", "server", "client", "router", "switch",
+                      "gateway", "access_point", "scada_master", "scada_slave", etc.
         num_ports: Default number of network ports/interfaces
         port_types: Default port/interface types
             For ns-3: "ethernet", "wifi", "lte", "p2p"
@@ -486,6 +489,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="host",
             protocol_stack="internet",
+            behavior="end_device",
             num_ports=4,
             port_types=["ethernet"],
             medium_type="wired",
@@ -497,6 +501,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="switch",
             protocol_stack="bridge",
+            behavior="switch",
             num_ports=8,
             port_types=["ethernet"],
             medium_type="wired",
@@ -506,6 +511,7 @@ class SimulatorNodeDefaults:
     simulator: str = "ns3"
     base_type: str = "host"
     protocol_stack: str = "internet"
+    behavior: str = "end_device"
     num_ports: int = 4
     port_types: List[str] = field(default_factory=lambda: ["ethernet"])
     medium_type: str = "wired"
@@ -519,6 +525,7 @@ class SimulatorNodeDefaults:
             "simulator": self.simulator,
             "base_type": self.base_type,
             "protocol_stack": self.protocol_stack,
+            "behavior": self.behavior,
             "num_ports": self.num_ports,
             "port_types": self.port_types,
             "medium_type": self.medium_type,
@@ -534,6 +541,7 @@ class SimulatorNodeDefaults:
             simulator=data.get("simulator", "ns3"),
             base_type=data.get("base_type", "host"),
             protocol_stack=data.get("protocol_stack", "internet"),
+            behavior=data.get("behavior", "end_device"),
             num_ports=data.get("num_ports", 4),
             port_types=data.get("port_types", ["ethernet"]),
             medium_type=data.get("medium_type", "wired"),
@@ -549,6 +557,7 @@ class SimulatorNodeDefaults:
             simulator=self.simulator,
             base_type=self.base_type,
             protocol_stack=self.protocol_stack,
+            behavior=self.behavior,
             num_ports=self.num_ports,
             port_types=list(self.port_types),
             medium_type=self.medium_type,
@@ -564,6 +573,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="host",
             protocol_stack="internet",
+            behavior="end_device",
             num_ports=4,
             port_types=["ethernet"],
             medium_type="wired",
@@ -577,6 +587,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="router",
             protocol_stack="internet",
+            behavior="router",
             num_ports=4,
             port_types=["ethernet"],
             medium_type="wired",
@@ -590,6 +601,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="switch",
             protocol_stack="bridge",
+            behavior="switch",
             num_ports=8,
             port_types=["ethernet"],
             medium_type="wired",
@@ -603,6 +615,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="station",
             protocol_stack="internet",
+            behavior="end_device",
             num_ports=1,
             port_types=["wifi"],
             medium_type="wifi_station",
@@ -616,6 +629,7 @@ class SimulatorNodeDefaults:
             simulator="ns3",
             base_type="access_point",
             protocol_stack="internet",
+            behavior="access_point",
             num_ports=2,
             port_types=["wifi", "ethernet"],
             medium_type="wifi_ap",
