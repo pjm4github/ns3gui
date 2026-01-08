@@ -19,10 +19,10 @@
             }
           ],
           "connectors": [
-            {"id": "54e73498", "edge_position": 0.0, "label": "eth0", "direction": "outward"},
-            {"id": "3eeb8ebb", "edge_position": 0.25, "label": "eth1", "direction": "outward"},
-            {"id": "4d2ea1e0", "edge_position": 0.5, "label": "eth2", "direction": "outward"},
-            {"id": "0ff7d180", "edge_position": 0.75, "label": "eth3", "direction": "outward"}
+            {"id": "54e73498", "edge_position": 0.0, "label": "eth0", "direction": "Out"},
+            {"id": "3eeb8ebb", "edge_position": 0.25, "label": "eth1", "direction": "Out"},
+            {"id": "4d2ea1e0", "edge_position": 0.5, "label": "eth2", "direction": "InOut"},
+            {"id": "0ff7d180", "edge_position": 0.75, "label": "eth3", "direction": "InOut"}
           ],
           "style": {
             "fill_color": "#FF6B6B",
@@ -85,12 +85,12 @@
             }
           ],
           "connectors": [
-            {"id": "c1", "edge_position": 0.0, "label": "N", "direction": "outward"},
-            {"id": "c2", "edge_position": 0.167, "label": "NE", "direction": "outward"},
-            {"id": "c3", "edge_position": 0.333, "label": "SE", "direction": "outward"},
-            {"id": "c4", "edge_position": 0.5, "label": "S", "direction": "outward"},
-            {"id": "c5", "edge_position": 0.667, "label": "SW", "direction": "outward"},
-            {"id": "c6", "edge_position": 0.833, "label": "NW", "direction": "outward"}
+            {"id": "c1", "edge_position": 0.0, "label": "N", "direction": "InOut"},
+            {"id": "c2", "edge_position": 0.167, "label": "NE", "direction": "InOut"},
+            {"id": "c3", "edge_position": 0.333, "label": "SE", "direction": "InOut"},
+            {"id": "c4", "edge_position": 0.5, "label": "S", "direction": "InOut"},
+            {"id": "c5", "edge_position": 0.667, "label": "SW", "direction": "InOut"},
+            {"id": "c6", "edge_position": 0.833, "label": "NW", "direction": "InOut"}
           ],
           "style": {
             "fill_color": "#065F46",
@@ -140,10 +140,10 @@
             }
           ],
           "connectors": [
-            {"id": "c1", "edge_position": 0.125, "label": "N", "direction": "outward"},
-            {"id": "c2", "edge_position": 0.375, "label": "E", "direction": "outward"},
-            {"id": "c3", "edge_position": 0.625, "label": "S", "direction": "outward"},
-            {"id": "c4", "edge_position": 0.875, "label": "W", "direction": "outward"}
+            {"id": "c1", "edge_position": 0.125, "label": "N", "direction": "Out"},
+            {"id": "c2", "edge_position": 0.375, "label": "E", "direction": "Out"},
+            {"id": "c3", "edge_position": 0.625, "label": "S", "direction": "Out"},
+            {"id": "c4", "edge_position": 0.875, "label": "W", "direction": "Out"}
           ],
           "style": {
             "fill_color": "#1E40AF",
@@ -178,20 +178,6 @@
                 "scada_role": "master",
                 "redundancy": false
               }
-            },
-            "omnet": {
-              "simulator": "omnet",
-              "base_type": "StandardHost",
-              "protocol_stack": "inet",
-              "behavior": "scada_master",
-              "num_ports": 4,
-              "port_types": ["eth"],
-              "medium_type": "wired",
-              "routing_mode": "auto",
-              "applications": [],
-              "custom_properties": {
-                "module_type": "inet.node.inet.StandardHost"
-              }
             }
           },
           "is_default": false,
@@ -212,8 +198,8 @@
             }
           ],
           "connectors": [
-            {"id": "c1", "edge_position": 0.0, "label": "E", "direction": "outward"},
-            {"id": "c2", "edge_position": 0.5, "label": "W", "direction": "outward"}
+            {"id": "c1", "edge_position": 0.0, "label": "E", "direction": "In"},
+            {"id": "c2", "edge_position": 0.5, "label": "W", "direction": "In"}
           ],
           "style": {
             "fill_color": "#059669",

@@ -176,8 +176,10 @@ class ColorButton(QPushButton):
 
     def _pick_color(self):
         """Open color picker dialog."""
-        # Use native dialog to match application style
-        dialog = QColorDialog(self._color, self)
+        # Note: Using default constructor + setCurrentColor() because
+        # QColorDialog(color, parent) has a bug that changes window background
+        dialog = QColorDialog()
+        dialog.setCurrentColor(self._color)
         dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, False)
         if dialog.exec() == QColorDialog.DialogCode.Accepted:
             color = dialog.currentColor()
