@@ -1,0 +1,682 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ShapeEditorDialog</class>
+ <widget class="QDialog" name="ShapeEditorDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1008</width>
+    <height>879</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Shape Editor</string>
+  </property>
+  <property name="modal">
+   <bool>true</bool>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout_4">
+   <item>
+    <widget class="QMenuBar" name="menu_bar">
+     <widget class="QMenu" name="menu_file">
+      <property name="title">
+       <string>File</string>
+      </property>
+      <addaction name="action_load"/>
+      <addaction name="action_save"/>
+      <addaction name="separator"/>
+      <addaction name="action_reset"/>
+     </widget>
+     <widget class="QMenu" name="menu_edit">
+      <property name="title">
+       <string>Edit</string>
+      </property>
+      <widget class="QMenu" name="menu_add_primitive">
+       <property name="title">
+        <string>Add Primitive</string>
+       </property>
+       <addaction name="action_add_ellipse"/>
+       <addaction name="action_add_rectangle"/>
+       <addaction name="action_add_polygon"/>
+      </widget>
+      <addaction name="action_undo"/>
+      <addaction name="action_redo"/>
+      <addaction name="separator"/>
+      <addaction name="menu_add_primitive"/>
+      <addaction name="action_add_connector"/>
+     </widget>
+     <widget class="QMenu" name="menu_view">
+      <property name="title">
+       <string>View</string>
+      </property>
+      <addaction name="action_show_grid"/>
+      <addaction name="action_snap_to_grid"/>
+     </widget>
+     <addaction name="menu_file"/>
+     <addaction name="menu_edit"/>
+     <addaction name="menu_view"/>
+    </widget>
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout">
+         <item>
+          <widget class="QGraphicsView" name="canvas">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+             <horstretch>1</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>400</width>
+             <height>400</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_2">
+         <item>
+          <widget class="QWidget" name="panels_widget" native="true">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>220</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>220</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <layout class="QVBoxLayout" name="panels_layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QGroupBox" name="primitives_panel">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>180</height>
+               </size>
+              </property>
+              <property name="title">
+               <string>Primitives</string>
+              </property>
+              <layout class="QVBoxLayout" name="primitives_layout">
+               <property name="spacing">
+                <number>4</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>4</number>
+               </property>
+               <property name="rightMargin">
+                <number>4</number>
+               </property>
+               <property name="bottomMargin">
+                <number>4</number>
+               </property>
+               <item>
+                <widget class="QListWidget" name="prim_list">
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>80</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="prim_add_layout">
+                 <item>
+                  <widget class="QPushButton" name="add_ellipse_btn">
+                   <property name="toolTip">
+                    <string>Add Ellipse</string>
+                   </property>
+                   <property name="text">
+                    <string>+ ○</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="add_rect_btn">
+                   <property name="toolTip">
+                    <string>Add Rectangle</string>
+                   </property>
+                   <property name="text">
+                    <string>+ □</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="add_poly_btn">
+                   <property name="toolTip">
+                    <string>Add Polygon</string>
+                   </property>
+                   <property name="text">
+                    <string>+ △</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QPushButton" name="prim_remove_btn">
+                 <property name="text">
+                  <string>- Remove</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="style_panel">
+              <property name="title">
+               <string>Style</string>
+              </property>
+              <layout class="QFormLayout" name="style_form_layout">
+               <property name="horizontalSpacing">
+                <number>8</number>
+               </property>
+               <property name="verticalSpacing">
+                <number>6</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>4</number>
+               </property>
+               <property name="rightMargin">
+                <number>4</number>
+               </property>
+               <property name="bottomMargin">
+                <number>4</number>
+               </property>
+               <item row="0" column="0" colspan="2">
+                <widget class="QLabel" name="style_prim_label">
+                 <property name="text">
+                  <string>&lt;b&gt;Selected Primitive&lt;/b&gt;</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="label_fill">
+                 <property name="text">
+                  <string>Fill:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QPushButton" name="fill_color_btn">
+                 <property name="minimumSize">
+                  <size>
+                   <width>60</width>
+                   <height>24</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string/>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="label_fill_opacity">
+                 <property name="text">
+                  <string>Fill Opacity:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QSlider" name="fill_opacity">
+                 <property name="maximum">
+                  <number>100</number>
+                 </property>
+                 <property name="value">
+                  <number>100</number>
+                 </property>
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="label_stroke">
+                 <property name="text">
+                  <string>Stroke:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QPushButton" name="stroke_color_btn">
+                 <property name="minimumSize">
+                  <size>
+                   <width>60</width>
+                   <height>24</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string/>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0">
+                <widget class="QLabel" name="label_stroke_width">
+                 <property name="text">
+                  <string>Stroke Width:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="1">
+                <widget class="QDoubleSpinBox" name="stroke_width">
+                 <property name="minimum">
+                  <double>0.500000000000000</double>
+                 </property>
+                 <property name="maximum">
+                  <double>10.000000000000000</double>
+                 </property>
+                 <property name="singleStep">
+                  <double>0.500000000000000</double>
+                 </property>
+                 <property name="value">
+                  <double>2.000000000000000</double>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="0" colspan="2">
+                <widget class="QLabel" name="style_text_label">
+                 <property name="text">
+                  <string>&lt;b&gt;Text&lt;/b&gt;</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="0">
+                <widget class="QLabel" name="label_font">
+                 <property name="text">
+                  <string>Font:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
+                <widget class="QFontComboBox" name="font_combo"/>
+               </item>
+               <item row="7" column="0">
+                <widget class="QLabel" name="label_icon_text">
+                 <property name="text">
+                  <string>Icon Text:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="7" column="1">
+                <widget class="QLineEdit" name="icon_text">
+                 <property name="maxLength">
+                  <number>4</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="8" column="0">
+                <widget class="QLabel" name="label_text_size">
+                 <property name="text">
+                  <string>Text Size:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="8" column="1">
+                <widget class="QSpinBox" name="icon_size">
+                 <property name="minimum">
+                  <number>8</number>
+                 </property>
+                 <property name="maximum">
+                  <number>32</number>
+                 </property>
+                 <property name="value">
+                  <number>16</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="9" column="0">
+                <widget class="QLabel" name="label_text_color">
+                 <property name="text">
+                  <string>Text Color:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="9" column="1">
+                <widget class="QPushButton" name="icon_color_btn">
+                 <property name="minimumSize">
+                  <size>
+                   <width>60</width>
+                   <height>24</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string/>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="connectors_panel">
+              <property name="title">
+               <string>Connectors</string>
+              </property>
+              <layout class="QVBoxLayout" name="connectors_layout">
+               <property name="spacing">
+                <number>4</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>4</number>
+               </property>
+               <property name="rightMargin">
+                <number>4</number>
+               </property>
+               <property name="bottomMargin">
+                <number>4</number>
+               </property>
+               <item>
+                <widget class="QListWidget" name="conn_list"/>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="conn_label_layout">
+                 <item>
+                  <widget class="QLabel" name="label_conn_label">
+                   <property name="text">
+                    <string>Label:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="conn_label_edit">
+                   <property name="maxLength">
+                    <number>10</number>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="conn_pos_layout">
+                 <item>
+                  <widget class="QLabel" name="label_conn_pos">
+                   <property name="text">
+                    <string>Position:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QSpinBox" name="conn_pos_spin">
+                   <property name="suffix">
+                    <string>%</string>
+                   </property>
+                   <property name="maximum">
+                    <number>100</number>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="conn_pos_spacer">
+                   <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="conn_dir_layout">
+                 <item>
+                  <widget class="QLabel" name="label_conn_dir">
+                   <property name="text">
+                    <string>Direction:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QComboBox" name="conn_direction_combo"/>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="conn_btn_layout">
+                 <item>
+                  <widget class="QPushButton" name="conn_add_btn">
+                   <property name="text">
+                    <string>+ Add</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="conn_remove_btn">
+                   <property name="text">
+                    <string>- Remove</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <spacer name="verticalSpacer">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="toolbar_layout">
+       <item>
+        <widget class="QCheckBox" name="show_grid_cb">
+         <property name="text">
+          <string>Show Grid</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="grid_snap_cb">
+         <property name="text">
+          <string>Snap to Grid (Ctrl+drag)</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="toolbar_spacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QDialogButtonBox" name="button_box">
+         <property name="standardButtons">
+          <set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+  </layout>
+  <action name="action_load">
+   <property name="text">
+    <string>Load Shape...</string>
+   </property>
+  </action>
+  <action name="action_save">
+   <property name="text">
+    <string>Save Shape...</string>
+   </property>
+  </action>
+  <action name="action_reset">
+   <property name="text">
+    <string>Reset to Default</string>
+   </property>
+  </action>
+  <action name="action_undo">
+   <property name="text">
+    <string>Undo</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Z</string>
+   </property>
+  </action>
+  <action name="action_redo">
+   <property name="text">
+    <string>Redo</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+Z</string>
+   </property>
+  </action>
+  <action name="action_add_ellipse">
+   <property name="text">
+    <string>Ellipse</string>
+   </property>
+  </action>
+  <action name="action_add_rectangle">
+   <property name="text">
+    <string>Rectangle</string>
+   </property>
+  </action>
+  <action name="action_add_polygon">
+   <property name="text">
+    <string>Polygon</string>
+   </property>
+  </action>
+  <action name="action_add_connector">
+   <property name="text">
+    <string>Add Connector</string>
+   </property>
+  </action>
+  <action name="action_show_grid">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Show Grid</string>
+   </property>
+  </action>
+  <action name="action_snap_to_grid">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Snap to Grid</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>button_box</sender>
+   <signal>rejected()</signal>
+   <receiver>ShapeEditorDialog</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>316</x>
+     <y>260</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>286</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>

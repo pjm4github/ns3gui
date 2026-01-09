@@ -10,3 +10,4 @@ PyQt6>=6.4.0
 # pyqtgraph>=0.13.0
 pytest
 pytest-cov
+qt6-applications

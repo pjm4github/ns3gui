@@ -1237,6 +1237,7 @@ class ConnectorHandle(QGraphicsEllipseItem):
         self.connector = connector
         self.canvas = canvas
         self._updating = False
+        self._dragging = False
 
         # Orange appearance
         self.setBrush(QBrush(QColor("#F59E0B")))
@@ -1247,8 +1248,27 @@ class ConnectorHandle(QGraphicsEllipseItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
         self.setZValue(99)
+        self.setAcceptHoverEvents(True)
 
+        # Create label text item as child
+        from PyQt6.QtWidgets import QGraphicsSimpleTextItem
+        self._label_item = QGraphicsSimpleTextItem(self)
+        self._label_item.setBrush(QBrush(QColor("#1F2937")))
+        font = QFont("SF Pro Display", 9)
+        font.setBold(True)
+        self._label_item.setFont(font)
+        self._label_item.setZValue(100)
+
+        self._update_label()
         self._update_tooltip()
+
+    def _update_label(self):
+        """Update the label text display."""
+        self._label_item.setText(self.connector.label)
+        # Position label offset from connector center
+        bounds = self._label_item.boundingRect()
+        # Offset to the right and slightly up
+        self._label_item.setPos(CONNECTOR_SIZE/2 + 2, -bounds.height()/2)
 
     def _update_tooltip(self):
         """Update tooltip with connector info."""
@@ -1259,6 +1279,11 @@ class ConnectorHandle(QGraphicsEllipseItem):
             dir_symbol = "↔"
         pos_pct = int(self.connector.edge_position * 100)
         self.setToolTip(f"{self.connector.label}\n{pos_pct}%\n{dir_symbol}")
+
+    def update_display(self):
+        """Update both label and tooltip from connector data."""
+        self._update_label()
+        self._update_tooltip()
 
     def update_position_on_edge(self, path: QPainterPath):
         """Update position based on edge_position along path."""
@@ -1271,10 +1296,73 @@ class ConnectorHandle(QGraphicsEllipseItem):
         self.setPos(pt)
         self._updating = False
 
+    def mousePressEvent(self, event):
+        """Handle mouse press - set as active handle and emit selection."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = True
+            self.canvas._active_handle = self
+            # Emit connector selected signal
+            self.canvas.connector_selected.emit(self.connector.id)
+            debug_print(f"ConnectorHandle.mousePressEvent: {self.connector.label}")
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release - clear active handle."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            if self.canvas._active_handle == self:
+                self.canvas._active_handle = None
+            # Emit drag completed signal
+            self.canvas.drag_completed.emit()
+            debug_print(f"ConnectorHandle.mouseReleaseEvent: {self.connector.label}")
+        super().mouseReleaseEvent(event)
+
+    def handle_drag(self, scene_pos: QPointF):
+        """Handle drag to new position - snap to edge."""
+        path = self.canvas.current_path
+        if not path or path.isEmpty():
+            return
+
+        # Find nearest point on path
+        best_t = 0.0
+        best_dist = float('inf')
+
+        for i in range(101):
+            t = i / 100.0
+            pt = path.pointAtPercent(t)
+            dist = (pt.x() - scene_pos.x())**2 + (pt.y() - scene_pos.y())**2
+            if dist < best_dist:
+                best_dist = dist
+                best_t = t
+
+        # Fine search
+        for i in range(-10, 11):
+            t = max(0, min(1, best_t + i / 1000.0))
+            pt = path.pointAtPercent(t)
+            dist = (pt.x() - scene_pos.x())**2 + (pt.y() - scene_pos.y())**2
+            if dist < best_dist:
+                best_dist = dist
+                best_t = t
+
+        self.connector.edge_position = best_t
+
+        self._updating = True
+        final_pt = path.pointAtPercent(best_t)
+        self.setPos(final_pt)
+        self._updating = False
+        self._update_tooltip()
+
+        self.canvas.connector_moved.emit(self.connector.id)
+
     def itemChange(self, change, value):
         """Handle position changes - snap to edge."""
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             if self._updating:
+                return value
+
+            # Only process if we're being dragged by Qt's built-in mechanism
+            # (This handles cases where itemChange is triggered but handle_drag isn't called)
+            if not self._dragging:
                 return value
 
             pos = self.pos()
@@ -1532,6 +1620,7 @@ class ShapeEditorCanvas(QGraphicsView):
     shape_modified = pyqtSignal()
     point_selected = pyqtSignal(str)
     connector_selected = pyqtSignal(str)
+    connector_deselected = pyqtSignal()
     connector_moved = pyqtSignal(str)
     drag_completed = pyqtSignal()
     primitive_selected = pyqtSignal(str)
@@ -1695,6 +1784,10 @@ class ShapeEditorCanvas(QGraphicsView):
                         cp.handle_out = (cp.handle_out[0] / s, cp.handle_out[1] / s)
 
         return result
+
+    def get_internal_shape(self) -> Optional[ShapeDefinition]:
+        """Get direct reference to the internal shape (no copy, for real-time updates)."""
+        return self.shape
 
     def _rebuild_scene(self):
         """Rebuild all scene items from shape definition."""
@@ -1987,6 +2080,10 @@ class ShapeEditorCanvas(QGraphicsView):
         modifiers = event.modifiers()
         multi_select = bool(modifiers & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier))
 
+        # Deselect connector when clicking on anything other than a ConnectorHandle
+        if not isinstance(item, ConnectorHandle):
+            self.connector_deselected.emit()
+
         # Check if clicked on a GroupItem
         if isinstance(item, GroupItem):
             self._clear_group_selection()
@@ -2162,11 +2259,16 @@ class ShapeEditorCanvas(QGraphicsView):
         super().keyPressEvent(event)
 
     def _update_connector_positions(self):
-        """Update all connector positions."""
+        """Update all connector positions and displays."""
         if not self.current_path:
             return
         for handle in self._connector_handles.values():
             handle.update_position_on_edge(self.current_path)
+            handle.update_display()
+
+    def update_connector_handles(self):
+        """Public method to update connector handle positions and displays."""
+        self._update_connector_positions()
 
     def contextMenuEvent(self, event):
         """Show context menu."""
@@ -3208,14 +3310,19 @@ class ConnectorsPanel(QGroupBox):
     """Panel for managing shape connectors with direction selection."""
 
     connector_selected = pyqtSignal(str)
+    connector_deselected = pyqtSignal()
     connector_add_requested = pyqtSignal()
     connector_remove_requested = pyqtSignal(str)
     connector_label_changed = pyqtSignal(str, str)
+    connector_position_changed = pyqtSignal(str, float)  # conn_id, new_position
+    connector_direction_changed = pyqtSignal(str)  # conn_id (direction already updated in connector)
 
     def __init__(self, parent=None):
         super().__init__("Connectors", parent)
         self.shape: Optional[ShapeDefinition] = None
+        self._updating_selection = False
         self._setup_ui()
+        self._update_controls_enabled()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -3227,7 +3334,8 @@ class ConnectorsPanel(QGroupBox):
 
         # Label editor
         label_layout = QHBoxLayout()
-        label_layout.addWidget(QLabel("Label:"))
+        self.label_label = QLabel("Label:")
+        label_layout.addWidget(self.label_label)
         self.label_edit = QLineEdit()
         self.label_edit.setMaxLength(10)
         self.label_edit.textChanged.connect(self._on_label_changed)
@@ -3236,19 +3344,24 @@ class ConnectorsPanel(QGroupBox):
 
         # Position display
         pos_layout = QHBoxLayout()
-        pos_layout.addWidget(QLabel("Position:"))
-        self.pos_label = QLabel("0%")
+        self.pos_label = QLabel("Position:")
         pos_layout.addWidget(self.pos_label)
+        self.pos_spin = QSpinBox()
+        self.pos_spin.setRange(0, 100)
+        self.pos_spin.setSuffix("%")
+        self.pos_spin.valueChanged.connect(self._on_position_changed)
+        pos_layout.addWidget(self.pos_spin)
         pos_layout.addStretch()
         layout.addLayout(pos_layout)
 
         # Direction selector
         dir_layout = QHBoxLayout()
-        dir_layout.addWidget(QLabel("Direction:"))
+        self.dir_label = QLabel("Direction:")
+        dir_layout.addWidget(self.dir_label)
         self.direction_combo = QComboBox()
-        self.direction_combo.addItem("In", ConnectorDirection.IN)
-        self.direction_combo.addItem("Out", ConnectorDirection.OUT)
-        self.direction_combo.addItem("InOut", ConnectorDirection.INOUT)
+        self.direction_combo.addItem("← In", ConnectorDirection.IN)
+        self.direction_combo.addItem("→ Out", ConnectorDirection.OUT)
+        self.direction_combo.addItem("↔ InOut", ConnectorDirection.INOUT)
         self.direction_combo.setCurrentIndex(2)
         self.direction_combo.currentIndexChanged.connect(self._on_direction_changed)
         dir_layout.addWidget(self.direction_combo)
@@ -3267,40 +3380,162 @@ class ConnectorsPanel(QGroupBox):
 
         layout.addLayout(btn_layout)
 
+    def _update_controls_enabled(self):
+        """Enable/disable controls based on whether a connector is selected."""
+        has_selection = self.conn_list.currentItem() is not None
+        self.label_label.setEnabled(has_selection)
+        self.label_edit.setEnabled(has_selection)
+        self.pos_label.setEnabled(has_selection)
+        self.pos_spin.setEnabled(has_selection)
+        self.dir_label.setEnabled(has_selection)
+        self.direction_combo.setEnabled(has_selection)
+        self.remove_btn.setEnabled(has_selection and self.shape and len(self.shape.connectors) > 1)
+
+        if not has_selection:
+            self.label_edit.blockSignals(True)
+            self.label_edit.clear()
+            self.label_edit.blockSignals(False)
+            self.pos_spin.blockSignals(True)
+            self.pos_spin.setValue(0)
+            self.pos_spin.blockSignals(False)
+
     def set_shape(self, shape: ShapeDefinition):
         """Load connectors into list."""
         self.shape = shape
         self._refresh_list()
+        self._update_controls_enabled()
+
+    def _get_direction_symbol(self, direction) -> str:
+        """Get the arrow symbol for a direction."""
+        if isinstance(direction, ConnectorDirection):
+            return {"In": "←", "Out": "→", "InOut": "↔"}[direction.value]
+        elif direction in ("In", "Out", "InOut"):
+            return {"In": "←", "Out": "→", "InOut": "↔"}[direction]
+        return "↔"
+
+    def _format_item_text(self, conn: ShapeConnector) -> str:
+        """Format the list item text for a connector."""
+        pos_pct = int(conn.edge_position * 100)
+        direction = getattr(conn, 'direction', ConnectorDirection.INOUT)
+        dir_symbol = self._get_direction_symbol(direction)
+        return f"{dir_symbol} {conn.label} @ {pos_pct}%"
 
     def _refresh_list(self):
         """Refresh connectors list."""
+        # Save current selection
+        current_id = None
+        current = self.conn_list.currentItem()
+        if current:
+            current_id = current.data(Qt.ItemDataRole.UserRole)
+
+        self.conn_list.blockSignals(True)
         self.conn_list.clear()
         if not self.shape:
+            self.conn_list.blockSignals(False)
             return
 
-        for conn in self.shape.connectors:
-            pos_pct = int(conn.edge_position * 100)
-
-            direction = getattr(conn, 'direction', ConnectorDirection.INOUT)
-            if isinstance(direction, ConnectorDirection):
-                dir_symbol = {"In": "←", "Out": "→", "InOut": "↔"}[direction.value]
-            else:
-                dir_symbol = "↔"
-
-            item = QListWidgetItem(f"▸ {conn.label} @ {pos_pct}% {dir_symbol}")
+        select_index = -1
+        for i, conn in enumerate(self.shape.connectors):
+            item = QListWidgetItem(self._format_item_text(conn))
             item.setData(Qt.ItemDataRole.UserRole, conn.id)
             self.conn_list.addItem(item)
+            if conn.id == current_id:
+                select_index = i
 
-    def _on_selection_changed(self, current, previous):
+        # Restore selection
+        if select_index >= 0:
+            self.conn_list.setCurrentRow(select_index)
+        self.conn_list.blockSignals(False)
+
+    def _update_current_item_text(self):
+        """Update just the current item's text without refreshing entire list."""
+        current = self.conn_list.currentItem()
         if current and self.shape:
             conn_id = current.data(Qt.ItemDataRole.UserRole)
             conn = self.shape.get_connector_by_id(conn_id)
             if conn:
+                current.setText(self._format_item_text(conn))
+
+    def select_connector_by_id(self, conn_id: str):
+        """Select a connector in the list by its ID (called when canvas selects a connector)."""
+        if self._updating_selection:
+            return
+        self._updating_selection = True
+        
+        found = False
+        for i in range(self.conn_list.count()):
+            item = self.conn_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == conn_id:
+                self.conn_list.setCurrentItem(item)
+                found = True
+                break
+        
+        # Update controls with connector data
+        if found and self.shape:
+            conn = self.shape.get_connector_by_id(conn_id)
+            if conn:
+                self._update_controls_enabled()
+                
+                # Update label edit
                 self.label_edit.blockSignals(True)
                 self.label_edit.setText(conn.label)
                 self.label_edit.blockSignals(False)
-                self.pos_label.setText(f"{int(conn.edge_position * 100)}%")
 
+                # Update position spinbox
+                self.pos_spin.blockSignals(True)
+                self.pos_spin.setValue(int(conn.edge_position * 100))
+                self.pos_spin.blockSignals(False)
+
+                # Update direction combo
+                direction = getattr(conn, 'direction', ConnectorDirection.INOUT)
+                if isinstance(direction, ConnectorDirection):
+                    for i in range(self.direction_combo.count()):
+                        if self.direction_combo.itemData(i) == direction:
+                            self.direction_combo.blockSignals(True)
+                            self.direction_combo.setCurrentIndex(i)
+                            self.direction_combo.blockSignals(False)
+                            break
+        
+        self._updating_selection = False
+
+    def clear_selection(self):
+        """Clear the current selection and deselect all items."""
+        if self._updating_selection:
+            return
+        self._updating_selection = True
+        
+        # Clear selection in list widget
+        self.conn_list.blockSignals(True)
+        self.conn_list.clearSelection()
+        self.conn_list.setCurrentRow(-1)  # Deselect all rows
+        self.conn_list.blockSignals(False)
+        
+        # Update controls (disable them)
+        self._update_controls_enabled()
+        
+        self._updating_selection = False
+
+    def _on_selection_changed(self, current, previous):
+        if self._updating_selection:
+            return
+
+        self._update_controls_enabled()
+
+        if current and self.shape:
+            conn_id = current.data(Qt.ItemDataRole.UserRole)
+            conn = self.shape.get_connector_by_id(conn_id)
+            if conn:
+                # Update label edit
+                self.label_edit.blockSignals(True)
+                self.label_edit.setText(conn.label)
+                self.label_edit.blockSignals(False)
+
+                # Update position spinbox
+                self.pos_spin.blockSignals(True)
+                self.pos_spin.setValue(int(conn.edge_position * 100))
+                self.pos_spin.blockSignals(False)
+
+                # Update direction combo
                 direction = getattr(conn, 'direction', ConnectorDirection.INOUT)
                 if isinstance(direction, ConnectorDirection):
                     for i in range(self.direction_combo.count()):
@@ -3311,12 +3546,30 @@ class ConnectorsPanel(QGroupBox):
                             break
 
                 self.connector_selected.emit(conn_id)
+        else:
+            self.connector_deselected.emit()
 
     def _on_label_changed(self, text: str):
         current = self.conn_list.currentItem()
         if current and self.shape:
             conn_id = current.data(Qt.ItemDataRole.UserRole)
+            conn = self.shape.get_connector_by_id(conn_id)
+            if conn:
+                conn.label = text
+                self._update_current_item_text()
             self.connector_label_changed.emit(conn_id, text)
+
+    def _on_position_changed(self, value: int):
+        """Handle position spinbox change."""
+        current = self.conn_list.currentItem()
+        if current and self.shape:
+            conn_id = current.data(Qt.ItemDataRole.UserRole)
+            conn = self.shape.get_connector_by_id(conn_id)
+            if conn:
+                conn.edge_position = value / 100.0
+                self._update_current_item_text()
+                # Emit signal to update canvas
+                self.connector_position_changed.emit(conn_id, conn.edge_position)
 
     def _on_direction_changed(self, index: int):
         current = self.conn_list.currentItem()
@@ -3327,29 +3580,30 @@ class ConnectorsPanel(QGroupBox):
             conn = self.shape.get_connector_by_id(conn_id)
             if conn:
                 conn.direction = direction
-                self._refresh_list()
+                # Update the current item text
+                self._update_current_item_text()
+                # Emit signal to update canvas
+                self.connector_direction_changed.emit(conn_id)
 
     def update_connector_position(self, conn_id: str):
-        """Update display when connector is moved."""
+        """Update display when connector is moved on canvas."""
         if not self.shape:
             return
         conn = self.shape.get_connector_by_id(conn_id)
         if conn:
+            # Update list item text
             for i in range(self.conn_list.count()):
                 item = self.conn_list.item(i)
                 if item.data(Qt.ItemDataRole.UserRole) == conn_id:
-                    pos_pct = int(conn.edge_position * 100)
-                    direction = getattr(conn, 'direction', ConnectorDirection.INOUT)
-                    if isinstance(direction, ConnectorDirection):
-                        dir_symbol = {"In": "←", "Out": "→", "InOut": "↔"}[direction.value]
-                    else:
-                        dir_symbol = "↔"
-                    item.setText(f"▸ {conn.label} @ {pos_pct}% {dir_symbol}")
+                    item.setText(self._format_item_text(conn))
                     break
 
+            # Update position spinbox if this is the selected connector
             current = self.conn_list.currentItem()
             if current and current.data(Qt.ItemDataRole.UserRole) == conn_id:
-                self.pos_label.setText(f"{int(conn.edge_position * 100)}%")
+                self.pos_spin.blockSignals(True)
+                self.pos_spin.setValue(int(conn.edge_position * 100))
+                self.pos_spin.blockSignals(False)
 
     def _add_connector(self):
         self.connector_add_requested.emit()
@@ -3404,13 +3658,19 @@ class ShapeEditorDialog(QDialog):
 
         # Main content
         content = QHBoxLayout()
+        content.setSpacing(8)
 
-        # Canvas
+        # Canvas - expanding to fill available space
         self.canvas = ShapeEditorCanvas()
-        content.addWidget(self.canvas, stretch=2)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        content.addWidget(self.canvas)
 
-        # Panels
-        panels = QVBoxLayout()
+        # Panels - fixed width, pushed to the right
+        panels_widget = QWidget()
+        panels_widget.setFixedWidth(220)
+        panels_widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        panels = QVBoxLayout(panels_widget)
+        panels.setContentsMargins(0, 0, 0, 0)
         panels.setSpacing(8)
 
         self.primitives_panel = PrimitivesPanel()
@@ -3423,7 +3683,7 @@ class ShapeEditorDialog(QDialog):
         self.connectors_panel = ConnectorsPanel()
         panels.addWidget(self.connectors_panel)
 
-        content.addLayout(panels, stretch=1)
+        content.addWidget(panels_widget)
         layout.addLayout(content)
 
         # Bottom toolbar
@@ -3512,6 +3772,9 @@ class ShapeEditorDialog(QDialog):
         """Connect signals."""
         self.canvas.shape_modified.connect(self._on_shape_modified)
         self.canvas.connector_moved.connect(self.connectors_panel.update_connector_position)
+        self.canvas.connector_moved.connect(self._on_canvas_connector_selected)  # Also select when moved
+        self.canvas.connector_selected.connect(self._on_canvas_connector_selected)
+        self.canvas.connector_deselected.connect(self.connectors_panel.clear_selection)
         self.canvas.drag_completed.connect(self._on_drag_completed)
         self.canvas.primitive_selected.connect(self._on_canvas_primitive_selected)
 
@@ -3522,23 +3785,44 @@ class ShapeEditorDialog(QDialog):
         self.primitives_panel.primitive_remove_requested.connect(self._on_primitive_remove)
         self.primitives_panel.perimeter_changed.connect(self._on_perimeter_changed)
 
+        self.connectors_panel.connector_selected.connect(self._on_panel_connector_selected)
         self.connectors_panel.connector_add_requested.connect(self._on_connector_add)
         self.connectors_panel.connector_remove_requested.connect(self._on_connector_remove)
         self.connectors_panel.connector_label_changed.connect(self._on_connector_label_changed)
+        self.connectors_panel.connector_position_changed.connect(self._on_connector_position_changed)
+        self.connectors_panel.connector_direction_changed.connect(self._on_connector_direction_changed)
 
         self.grid_action.triggered.connect(self.show_grid_cb.setChecked)
         self.snap_action.triggered.connect(self.grid_snap_cb.setChecked)
+
+    def _on_canvas_connector_selected(self, conn_id: str):
+        """Handle connector selection from canvas - update panel."""
+        self.connectors_panel.select_connector_by_id(conn_id)
+
+    def _on_panel_connector_selected(self, conn_id: str):
+        """Handle connector selection from panel - highlight on canvas."""
+        # Highlight the connector handle on canvas
+        for handle_id, handle in self.canvas._connector_handles.items():
+            if handle_id == conn_id:
+                handle.setSelected(True)
+                handle.setBrush(QBrush(QColor("#FBBF24")))  # Highlighted color
+            else:
+                handle.setSelected(False)
+                handle.setBrush(QBrush(QColor("#F59E0B")))  # Normal color
 
     def _load_shape(self):
         """Load shape into editors."""
         self.canvas.set_shape(self.shape)
 
         canvas_shape = self.canvas.get_shape()
-        if canvas_shape:
+        internal_shape = self.canvas.get_internal_shape()
+        if canvas_shape and internal_shape:
             self.style_panel.set_canvas(self.canvas)
-            self.style_panel.set_shape(canvas_shape)
+            # Style panel needs internal shape for direct style updates
+            self.style_panel.set_shape(internal_shape)
             self.primitives_panel.set_shape(canvas_shape)
-            self.connectors_panel.set_shape(canvas_shape)
+            # ConnectorsPanel needs the internal shape for real-time updates
+            self.connectors_panel.set_shape(internal_shape)
 
         self.undo_stack.initialize(self.shape)
         self._update_undo_actions()
@@ -3551,9 +3835,12 @@ class ShapeEditorDialog(QDialog):
         """Handle drag completion."""
         self._save_undo_state()
         shape = self.canvas.get_shape()
-        if shape:
+        internal_shape = self.canvas.get_internal_shape()
+        if shape and internal_shape:
+            self.style_panel.set_shape(internal_shape)
             self.primitives_panel.set_shape(shape)
-            self.connectors_panel.set_shape(shape)
+            # ConnectorsPanel needs the internal shape for real-time updates
+            self.connectors_panel.set_shape(internal_shape)
 
     def _on_canvas_primitive_selected(self, prim_id: str):
         """Handle selection from canvas."""
@@ -3569,9 +3856,10 @@ class ShapeEditorDialog(QDialog):
         self.canvas._select_primitive(prim_id)
 
     def _on_style_changed(self):
-        """Handle style changes."""
+        """Handle style changes - style panel already updates internal shape directly."""
         self._save_undo_state()
-        self.canvas.set_shape(self.style_panel.shape)
+        # Style panel has internal shape reference, so style is already updated
+        # Visual updates happen via item._apply_style() in the style panel handlers
 
     def _on_primitive_add(self, prim_type: PrimitiveType):
         """Handle primitive add."""
@@ -3598,27 +3886,46 @@ class ShapeEditorDialog(QDialog):
         """Handle connector add."""
         self._save_undo_state()
         self.canvas.add_connector()
-        shape = self.canvas.get_shape()
-        if shape:
-            self.connectors_panel.set_shape(shape)
+        internal_shape = self.canvas.get_internal_shape()
+        if internal_shape:
+            self.connectors_panel.set_shape(internal_shape)
 
     def _on_connector_remove(self, conn_id: str):
         """Handle connector remove."""
         self._save_undo_state()
-        shape = self.canvas.get_shape()
-        if shape and len(shape.connectors) > 1:
-            shape.remove_connector(conn_id)
-            self.canvas.set_shape(shape)
-            self.connectors_panel.set_shape(shape)
+        internal_shape = self.canvas.get_internal_shape()
+        if internal_shape and len(internal_shape.connectors) > 1:
+            internal_shape.remove_connector(conn_id)
+            # Rebuild canvas to reflect removal
+            self.canvas._rebuild_scene()
+            self.connectors_panel.set_shape(internal_shape)
 
     def _on_connector_label_changed(self, conn_id: str, new_label: str):
         """Handle connector label change."""
-        shape = self.canvas.get_shape()
-        if shape:
-            conn = shape.get_connector_by_id(conn_id)
+        internal_shape = self.canvas.get_internal_shape()
+        if internal_shape:
+            conn = internal_shape.get_connector_by_id(conn_id)
             if conn:
                 conn.label = new_label
-                self.connectors_panel._refresh_list()
+                # Update the canvas connector handle display
+                self.canvas.update_connector_handles()
+
+    def _on_connector_position_changed(self, conn_id: str, new_position: float):
+        """Handle connector position change from panel spinbox."""
+        self._save_undo_state()
+        internal_shape = self.canvas.get_internal_shape()
+        if internal_shape:
+            conn = internal_shape.get_connector_by_id(conn_id)
+            if conn:
+                conn.edge_position = new_position
+                # Update the canvas to move the connector handle
+                self.canvas.update_connector_handles()
+
+    def _on_connector_direction_changed(self, conn_id: str):
+        """Handle connector direction change from panel combo."""
+        # Direction already updated in connector by the panel (which has internal shape)
+        # Just update the canvas display
+        self.canvas.update_connector_handles()
 
     def _save_undo_state(self):
         """Save state for undo."""
@@ -3644,9 +3951,11 @@ class ShapeEditorDialog(QDialog):
             self._in_undo_redo = True
             self.shape = shape
             self.canvas.set_shape(shape)
-            self.style_panel.set_shape(shape)
-            self.primitives_panel.set_shape(shape)
-            self.connectors_panel.set_shape(shape)
+            canvas_shape = self.canvas.get_shape()
+            internal_shape = self.canvas.get_internal_shape()
+            self.style_panel.set_shape(internal_shape)
+            self.primitives_panel.set_shape(canvas_shape)
+            self.connectors_panel.set_shape(internal_shape)
             self._in_undo_redo = False
             self._update_undo_actions()
 
@@ -3657,9 +3966,11 @@ class ShapeEditorDialog(QDialog):
             self._in_undo_redo = True
             self.shape = shape
             self.canvas.set_shape(shape)
-            self.style_panel.set_shape(shape)
-            self.primitives_panel.set_shape(shape)
-            self.connectors_panel.set_shape(shape)
+            canvas_shape = self.canvas.get_shape()
+            internal_shape = self.canvas.get_internal_shape()
+            self.style_panel.set_shape(internal_shape)
+            self.primitives_panel.set_shape(canvas_shape)
+            self.connectors_panel.set_shape(internal_shape)
             self._in_undo_redo = False
             self._update_undo_actions()
 
